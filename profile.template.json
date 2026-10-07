@@ -1,0 +1,79 @@
+{
+  "personal": {
+    "full_name": "Applicant Name",
+    "first_name": "Applicant",
+    "last_name": "Name",
+    "email": "applicant@example.com",
+    "phone": "09123456789",
+    "city": "Manila",
+    "province": "Metro Manila",
+    "country": "Philippines",
+    "age": 22,
+    "english_proficiency": "Professional working proficiency"
+  },
+  "education": {
+    "is_graduated": false,
+    "has_bachelors_degree": "No",
+    "degree_title": "Bachelor of Science in Information Technology",
+    "school": "University / College",
+    "status": "BSIT Student (2024-Present)",
+    "graduation_year": "2026"
+  },
+  "experience_and_skills": {
+    "total_work_experience_years": "0",
+    "internship_experience": "IT Intern - Digital records and data management",
+    "roles": {
+      "appointment_setter": "No experience",
+      "cold_calling": "No",
+      "sales": "No",
+      "customer_service": "No experience",
+      "hr_assistant": "No experience",
+      "back_office": "Less than 1 year",
+      "virtual_assistant": "No experience",
+      "data_entry": "Less than 1 year",
+      "software_developer": "Less than 1 year",
+      "it_support": "Less than 1 year"
+    },
+    "technical_skills": [
+      "Python",
+      "FastAPI",
+      "Flask",
+      "JavaScript",
+      "HTML",
+      "CSS",
+      "Tailwind CSS",
+      "Bootstrap",
+      "React",
+      "Next.js",
+      "SQLite",
+      "MySQL",
+      "Git",
+      "GitHub"
+    ],
+    "ai_tools": [
+      "ChatGPT",
+      "Claude",
+      "Local LLMs"
+    ],
+    "office_skills": [
+      "Microsoft Office",
+      "Excel",
+      "Google Sheets",
+      "Word",
+      "Data Management"
+    ]
+  },
+  "work_preferences": {
+    "authorized_to_work": "Yes",
+    "requires_sponsorship": "No",
+    "willing_to_relocate": "No",
+    "can_change_location": "No",
+    "live_near_site": "No",
+    "location_constraint": "Remote only",
+    "notice_period": "Less than 2 weeks",
+    "expected_monthly_salary": "₱25K",
+    "available_to_travel": "No",
+    "travel_roles": "No",
+    "english_level": "Professional"
+  }
+}

@@ -1,0 +1,17 @@
+*.log
+llama_server.log
+reranker.log
+__pycache__/
+*.py[cod]
+*.gguf
+*.bak
+.local_backup/
+
+# Personal profile and application history
+profile.json
+applied_jobs.txt
+applied_tracker.csv
+learned_memory.json
+unhandled_questions.json
+training_dataset.jsonl
+fine_tuning_dataset.jsonl
