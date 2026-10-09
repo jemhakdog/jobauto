@@ -112,6 +112,7 @@ Java_com_jobaut_app_ai_LlamaBridge_nativeInitModel(
     ctx_params.n_ctx = static_cast<uint32_t>(ctxSize > 0 ? ctxSize : 1024);
     ctx_params.n_threads = static_cast<int32_t>(nThreads > 0 ? nThreads : 4);
     ctx_params.n_threads_batch = static_cast<int32_t>(nThreads > 0 ? nThreads : 4);
+    ctx_params.embeddings = true;
 
     llama_context* ctx = llama_new_context_with_model(model, ctx_params);
     if (!ctx) {

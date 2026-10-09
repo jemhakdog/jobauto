@@ -43,7 +43,8 @@ data class UIElement(
  */
 class ScreenMap(
     val elements: List<UIElement>,
-    val rawText: String
+    val rawText: String,
+    val packageName: String = ""
 ) {
     /**
      * Finds a clickable or button element whose text or contentDescription matches [name] (case-insensitive).
@@ -181,9 +182,12 @@ class ScreenMap(
 
             traverse(root)
 
+            val rootPackage = root?.packageName?.toString() ?: ""
+
             return ScreenMap(
                 elements = collectedElements,
-                rawText = textBuilder.toString()
+                rawText = textBuilder.toString(),
+                packageName = rootPackage
             )
         }
     }

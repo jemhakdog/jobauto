@@ -59,10 +59,16 @@ class JobAutService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_START -> {
-                val qwenPath = intent.getStringExtra(EXTRA_QWEN_PATH) ?: resolveDefaultModelPath(DEFAULT_QWEN_MODEL)
-                val rerankerPath = intent.getStringExtra(EXTRA_RERANKER_PATH) ?: resolveDefaultModelPath(DEFAULT_RERANKER_MODEL)
+                // Android 8+ requirement: startForeground must be invoked immediately within 5s
+                val initialNotification = buildNotification("Starting JobAut service...", 0)
+                startForegroundCompat(initialNotification)
+                isRunning = true
+                _isRunningFlow.value = true
 
-                handleStart(qwenPath, rerankerPath)
+                val explicitQwen = intent.getStringExtra(EXTRA_QWEN_PATH) ?: ""
+                val explicitReranker = intent.getStringExtra(EXTRA_RERANKER_PATH) ?: ""
+
+                handleStartAsync(explicitQwen, explicitReranker)
                 return START_STICKY
             }
             else -> {
@@ -72,19 +78,13 @@ class JobAutService : Service() {
         }
     }
 
-    private fun handleStart(qwenPath: String, rerankerPath: String) {
+    private fun handleStartAsync(explicitQwen: String, explicitReranker: String) {
         val engine = botEngine ?: run {
             val created = BotEngine(applicationContext)
             botEngine = created
             _activeBotEngine.value = created
             created
         }
-
-        // Start foreground immediately with initial notification
-        val initialNotification = buildNotification("Initializing bot engine...", 0)
-        startForegroundCompat(initialNotification)
-        isRunning = true
-        _isRunningFlow.value = true
 
         // Observe BotEngine status updates to dynamically update notification
         statusObserverJob?.cancel()
@@ -94,8 +94,25 @@ class JobAutService : Service() {
             }
         }
 
-        // Launch the engine
-        engine.start(qwenModelPath = qwenPath, rerankerModelPath = rerankerPath)
+        // Offload model preparation & extraction from assets to background IO thread
+        serviceScope.launch(Dispatchers.IO) {
+            val qwenPath = if (explicitQwen.isNotEmpty()) {
+                explicitQwen
+            } else {
+                updateNotification(BotStatus(BotState.IDLE, true, 0, "", "Preparing AI model (Qwen)..."))
+                resolveDefaultModelPath(DEFAULT_QWEN_MODEL)
+            }
+
+            val rerankerPath = if (explicitReranker.isNotEmpty()) {
+                explicitReranker
+            } else {
+                updateNotification(BotStatus(BotState.IDLE, true, 0, "", "Preparing Reranker model..."))
+                resolveDefaultModelPath(DEFAULT_RERANKER_MODEL)
+            }
+
+            // Launch the engine with resolved paths
+            engine.start(qwenModelPath = qwenPath, rerankerModelPath = rerankerPath)
+        }
     }
 
     private fun handleStop() {

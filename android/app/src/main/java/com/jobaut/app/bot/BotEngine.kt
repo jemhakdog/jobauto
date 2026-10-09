@@ -74,6 +74,7 @@ class BotEngine(private val context: Context) {
     private val processedJobs = HashSet<String>()
     private var currentJobHash: String = ""
     private var consecutiveStallCount = 0
+    private var formSubmitAttempts = 0
 
     /**
      * Starts the autonomous bot loop.
@@ -175,6 +176,15 @@ class BotEngine(private val context: Context) {
                 continue
             }
 
+            // Check for external webview/browser navigation (Spec §4.2)
+            val pkg = screenMap.packageName
+            if (pkg.isNotEmpty() && !pkg.startsWith("com.jobstreet") && !pkg.startsWith("com.seek") && pkg != "com.jobaut.app") {
+                log("External package detected ($pkg) - navigating back")
+                service.goBack()
+                delay(1200L)
+                continue
+            }
+
             val userProfile = configManager.loadProfile()
 
             // 1. Detect screen type & handle corresponding state
@@ -246,6 +256,7 @@ class BotEngine(private val context: Context) {
         }
 
         currentJobHash = ""
+        formSubmitAttempts = 0
         updateStatus(currentJobTitle = "", state = BotState.SCANNING_FEED)
         consecutiveStallCount = 0
         delay(1500L)
@@ -300,7 +311,15 @@ class BotEngine(private val context: Context) {
             ?: screenMap.findButton("submit")
 
         if (submitBtn != null) {
-            log("Tapping Submit Application")
+            formSubmitAttempts++
+            if (formSubmitAttempts >= 3) {
+                log("Form submission failed 3 times (validation error/CAPTCHA). Backing out...")
+                formSubmitAttempts = 0
+                service.goBack()
+                delay(1000L)
+                return
+            }
+            log("Tapping Submit Application (attempt $formSubmitAttempts)")
             service.click(submitBtn.node)
             delay(2000L)
             return
