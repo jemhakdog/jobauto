@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.jobaut.app.R
 import com.jobaut.app.bot.BotEngine
+import com.jobaut.app.bot.BotState
 import com.jobaut.app.bot.BotStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,8 +66,8 @@ class JobAutService : Service() {
                 isRunning = true
                 _isRunningFlow.value = true
 
-                val explicitQwen = intent.getStringExtra(EXTRA_QWEN_PATH) ?: ""
-                val explicitReranker = intent.getStringExtra(EXTRA_RERANKER_PATH) ?: ""
+                val explicitQwen = intent?.getStringExtra(EXTRA_QWEN_PATH) ?: ""
+                val explicitReranker = intent?.getStringExtra(EXTRA_RERANKER_PATH) ?: ""
 
                 handleStartAsync(explicitQwen, explicitReranker)
                 return START_STICKY
