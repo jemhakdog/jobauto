@@ -14,13 +14,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 
 /**
@@ -69,6 +72,7 @@ class BotEngine(private val context: Context) {
 
     // In-memory applied/seen jobs cache for fast loop deduplication
     private val processedJobs = HashSet<String>()
+    private var currentJobHash: String = ""
     private var consecutiveStallCount = 0
 
     /**
@@ -100,8 +104,10 @@ class BotEngine(private val context: Context) {
                 log("Bot engine error: ${e.message}")
                 Log.e(TAG, "Unhandled error in BotEngine loop", e)
             } finally {
-                cleanup()
-                updateStatus(state = BotState.STOPPED, isRunning = false, lastLog = "Bot engine stopped")
+                withContext(NonCancellable) {
+                    cleanup()
+                    updateStatus(state = BotState.STOPPED, isRunning = false, lastLog = "Bot engine stopped")
+                }
             }
         }
     }
@@ -154,7 +160,7 @@ class BotEngine(private val context: Context) {
      * Primary automation state machine loop.
      */
     private suspend fun runLoop() {
-        while (scope.isActive) {
+        while (currentCoroutineContext().isActive) {
             val service = JobstreetAccessibilityService.instance
             if (service == null) {
                 updateStatus(state = BotState.PAUSED, lastLog = "Accessibility service not connected")
@@ -208,7 +214,7 @@ class BotEngine(private val context: Context) {
         updateStatus(state = BotState.CONFIRMING, lastLog = "Application submitted confirmation detected")
 
         val currentTitle = _statusFlow.value.currentJobTitle.ifBlank { "Job Application" }
-        val jobId = "job_${System.currentTimeMillis()}"
+        val jobId = currentJobHash.ifBlank { "job_${System.currentTimeMillis()}" }
 
         // Record applied job in Room DB
         try {
@@ -219,7 +225,7 @@ class BotEngine(private val context: Context) {
                 appliedAt = System.currentTimeMillis()
             )
             db.appliedJobDao().insert(entity)
-            log("Recorded application for '$currentTitle' in Room DB")
+            log("Recorded application for '$currentTitle' (id: $jobId) in Room DB")
         } catch (e: Exception) {
             Log.e(TAG, "Error recording applied job: ${e.message}")
         }
@@ -239,6 +245,7 @@ class BotEngine(private val context: Context) {
             service.goBack()
         }
 
+        currentJobHash = ""
         updateStatus(currentJobTitle = "", state = BotState.SCANNING_FEED)
         consecutiveStallCount = 0
         delay(1500L)
@@ -251,16 +258,23 @@ class BotEngine(private val context: Context) {
     ) {
         updateStatus(state = BotState.FILLING_FORM, lastLog = "Filling application form")
 
-        // 1. Fill empty text input fields
+        // 1. Fill all empty text input fields on the screen
         val inputs = screenMap.findInputs()
+        var filledAny = false
         for (input in inputs) {
             if (input.text.isBlank()) {
                 val questionLabel = extractInputLabel(screenMap, input)
                 val answer = QuestionReasoner.answerQuestion(questionLabel, profile, qwenCtxPtr, db)
                 log("Filling input field '$questionLabel' -> '$answer'")
-                service.setText(input.node, answer)
+                val success = service.setText(input.node, answer)
+                if (success) {
+                    filledAny = true
+                }
                 delay(300L)
             }
+        }
+        if (filledAny) {
+            delay(400L)
         }
 
         // 2. Handle radio / checkable options if present
@@ -387,6 +401,7 @@ class BotEngine(private val context: Context) {
 
             if (shouldApply) {
                 log("Job matches: '$title'. Opening details...")
+                currentJobHash = jobHash
                 updateStatus(currentJobTitle = title, state = BotState.JOB_DETAILS)
                 service.click(card.node)
                 appliedOrClicked = true

@@ -78,7 +78,7 @@ object JobVerifier {
         // Check experience requirement patterns in combined text
         for (pattern in DISQUALIFYING_EXP) {
             val matcher = pattern.matcher(combinedText)
-            if (matcher.find()) {
+            while (matcher.find()) {
                 val matchIdx = matcher.start()
                 val start = (matchIdx - 30).coerceAtLeast(0)
                 val end = (matcher.end() + 30).coerceAtMost(combinedText.length)
