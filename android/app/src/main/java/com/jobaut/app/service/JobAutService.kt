@@ -217,8 +217,26 @@ class JobAutService : Service() {
 
     private fun resolveDefaultModelPath(fileName: String): String {
         val modelsDir = File(filesDir, "models")
+        if (!modelsDir.exists()) {
+            modelsDir.mkdirs()
+        }
         val candidate = File(modelsDir, fileName)
-        return if (candidate.exists()) candidate.absolutePath else ""
+        if (candidate.exists() && candidate.length() > 0) {
+            return candidate.absolutePath
+        }
+
+        // Check if bundled in assets/models/
+        return try {
+            val assetPath = "models/$fileName"
+            assets.open(assetPath).use { input ->
+                candidate.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            candidate.absolutePath
+        } catch (e: Exception) {
+            if (candidate.exists()) candidate.absolutePath else ""
+        }
     }
 
     companion object {
@@ -233,8 +251,8 @@ class JobAutService : Service() {
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "jobaut_service_channel"
 
-        private const val DEFAULT_QWEN_MODEL = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
-        private const val DEFAULT_RERANKER_MODEL = "bge-reranker-v2-m3-q4_k_m.gguf"
+        private const val DEFAULT_QWEN_MODEL = "qwen2.5-0.5b-instruct.gguf"
+        private const val DEFAULT_RERANKER_MODEL = "bge-reranker-base.gguf"
 
         @Volatile
         var isRunning: Boolean = false
