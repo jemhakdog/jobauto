@@ -2,4 +2,10 @@
 <resources>
     <string name="app_name">JobAut</string>
     <string name="accessibility_service_desc">Enables automated job application and navigation in Jobstreet</string>
+    <string name="notification_channel_name">JobAut Bot Service</string>
+    <string name="notification_channel_desc">Active foreground service running the JobAut automation bot</string>
+    <string name="btn_stop_bot">Stop Bot</string>
+    <string name="status_running">Bot Running</string>
+    <string name="status_stopping">Bot Stopping...</string>
+    <string name="status_applied_format">Applied: %1$d today | %2$s</string>
 </resources>
