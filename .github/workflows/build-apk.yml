@@ -32,7 +32,9 @@ jobs:
           cache: 'gradle'
 
       - name: Setup Android SDK, NDK & CMake
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
       - name: Install NDK and CMake via sdkmanager
         run: |
