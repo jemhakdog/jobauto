@@ -40,45 +40,6 @@ jobs:
         run: |
           yes | sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
 
-      - name: Create Models Directory
-        run: |
-          mkdir -p android/app/src/main/assets/models
-
-      - name: Download GGUF Models from Hugging Face
-        run: |
-          set -e
-          cd android/app/src/main/assets/models
-
-          echo "Downloading Qwen2.5-0.5B-Instruct-Q8_0.gguf..."
-          curl -L -f --retry 3 --retry-delay 5 \
-            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf" \
-            -o qwen2.5-0.5b-instruct.gguf
-
-          echo "Downloading bge-reranker-base-q8_0.gguf..."
-          curl -L -f --retry 3 --retry-delay 5 \
-            "https://huggingface.co/magicunicorn/bge-reranker-base-Q8_0-GGUF/resolve/main/bge-reranker-base-q8_0.gguf" \
-            -o bge-reranker-base.gguf
-
-          echo "Verifying downloaded model file sizes..."
-          ls -lh qwen2.5-0.5b-instruct.gguf bge-reranker-base.gguf
-
-          QWEN_SIZE=$(stat -c%s qwen2.5-0.5b-instruct.gguf 2>/dev/null || stat -f%z qwen2.5-0.5b-instruct.gguf)
-          RERANKER_SIZE=$(stat -c%s bge-reranker-base.gguf 2>/dev/null || stat -f%z bge-reranker-base.gguf)
-
-          # Qwen2.5-0.5B-Q8_0 should be ~675MB (>500MB)
-          if [ "$QWEN_SIZE" -lt 500000000 ]; then
-            echo "Error: Qwen model file too small ($QWEN_SIZE bytes), download may have failed."
-            exit 1
-          fi
-
-          # BGE reranker base Q8_0 should be ~303MB (>250MB)
-          if [ "$RERANKER_SIZE" -lt 250000000 ]; then
-            echo "Error: Reranker model file too small ($RERANKER_SIZE bytes), download may have failed."
-            exit 1
-          fi
-
-          echo "Models successfully downloaded and verified."
-
       - name: Ensure Gradlew Executable
         run: chmod +x android/gradlew
 
@@ -90,7 +51,7 @@ jobs:
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: JobAut-AllInOne-APK
+          name: JobAut-Native-APK
           path: android/app/build/outputs/apk/**/*.apk
 
       - name: Upload APKs to GitHub Release

@@ -8,10 +8,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jobaut.app.automation.JobstreetAccessibilityService
 import com.jobaut.app.data.AppDatabase
+import com.jobaut.app.data.ModelManager
 import com.jobaut.app.data.UserConfigManager
 import com.jobaut.app.data.UserProfile
 import com.jobaut.app.service.JobAutService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,7 +45,13 @@ data class DashboardUiState(
     val currentJobTitle: String = "",
     val logs: List<LogEntry> = emptyList(),
     val profile: UserProfile = UserProfile(),
-    val isJobstreetInstalled: Boolean = true
+    val isJobstreetInstalled: Boolean = true,
+    val qwenModelPresent: Boolean = false,
+    val qwenModelSize: String = "",
+    val rerankerModelPresent: Boolean = false,
+    val rerankerModelSize: String = "",
+    val isImportingModel: Boolean = false,
+    val modelImportStatus: String = ""
 )
 
 /**
@@ -101,21 +109,108 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             loadInitialAppliedCount()
         }
 
-        // Check accessibility and package status
+        // Check accessibility, package status and model presence
         refreshAccessibilityStatus()
         checkJobstreetInstalled()
+        refreshModelStatus()
 
         // Initial welcoming log
         addLog("INFO", "JobAut native dashboard initialized")
     }
 
     /**
-     * Starts the autonomous JobAut background service.
+     * Refreshes local model presence and file sizes.
+     */
+    fun refreshModelStatus() {
+        val context = getApplication<Application>()
+        val qwenPresent = ModelManager.isModelPresent(context, ModelManager.QWEN_MODEL_FILENAME)
+        val qwenSize = ModelManager.getModelSizeFormatted(context, ModelManager.QWEN_MODEL_FILENAME)
+        val rerankerPresent = ModelManager.isModelPresent(context, ModelManager.RERANKER_MODEL_FILENAME)
+        val rerankerSize = ModelManager.getModelSizeFormatted(context, ModelManager.RERANKER_MODEL_FILENAME)
+
+        _uiState.update {
+            it.copy(
+                qwenModelPresent = qwenPresent,
+                qwenModelSize = qwenSize,
+                rerankerModelPresent = rerankerPresent,
+                rerankerModelSize = rerankerSize
+            )
+        }
+    }
+
+    /**
+     * Imports a user-selected GGUF model file into app-private storage.
+     */
+    fun importModel(uri: Uri, isQwen: Boolean) {
+        val context = getApplication<Application>()
+        val filename = if (isQwen) ModelManager.QWEN_MODEL_FILENAME else ModelManager.RERANKER_MODEL_FILENAME
+        val modelLabel = if (isQwen) "Qwen 2.5 0.5B" else "BGE Reranker"
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImportingModel = true, modelImportStatus = "Importing $modelLabel...") }
+            addLog("ACTION", "Importing $modelLabel model file...")
+
+            val result = ModelManager.importModel(context, uri, filename)
+            result.onSuccess { path ->
+                addLog("INFO", "Successfully imported $modelLabel ($path)")
+                if (isQwen) {
+                    configManager.saveQwenModelPath(path)
+                } else {
+                    configManager.saveRerankerModelPath(path)
+                }
+                refreshModelStatus()
+            }.onFailure { err ->
+                addLog("ERROR", "Failed to import $modelLabel: ${err.message}")
+            }
+
+            _uiState.update { it.copy(isImportingModel = false, modelImportStatus = "") }
+        }
+    }
+
+    /**
+     * Deletes a previously imported model file from app storage.
+     */
+    fun deleteModel(isQwen: Boolean) {
+        val context = getApplication<Application>()
+        val filename = if (isQwen) ModelManager.QWEN_MODEL_FILENAME else ModelManager.RERANKER_MODEL_FILENAME
+        ModelManager.deleteModel(context, filename)
+        viewModelScope.launch {
+            if (isQwen) {
+                configManager.saveQwenModelPath("")
+            } else {
+                configManager.saveRerankerModelPath("")
+            }
+            refreshModelStatus()
+        }
+        addLog("INFO", "Removed $filename")
+    }
+
+    /**
+     * Starts the autonomous JobAut background service and automatically opens Jobstreet.
      */
     fun startBot() {
         val context = getApplication<Application>()
         addLog("ACTION", "Starting JobAut bot background service...")
-        JobAutService.startService(context)
+
+        viewModelScope.launch {
+            val qwenPath = if (ModelManager.isModelPresent(context, ModelManager.QWEN_MODEL_FILENAME)) {
+                ModelManager.getModelFile(context, ModelManager.QWEN_MODEL_FILENAME).absolutePath
+            } else {
+                configManager.getQwenModelPath()
+            }
+
+            val rerankerPath = if (ModelManager.isModelPresent(context, ModelManager.RERANKER_MODEL_FILENAME)) {
+                ModelManager.getModelFile(context, ModelManager.RERANKER_MODEL_FILENAME).absolutePath
+            } else {
+                configManager.getRerankerModelPath()
+            }
+
+            JobAutService.startService(context, qwenPath, rerankerPath)
+
+            // Transition directly to Jobstreet after service initialization
+            delay(600L)
+            launchJobstreet()
+        }
     }
 
     /**

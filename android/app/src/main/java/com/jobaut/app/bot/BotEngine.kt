@@ -176,13 +176,40 @@ class BotEngine(private val context: Context) {
                 continue
             }
 
-            // Check for external webview/browser navigation (Spec §4.2)
             val pkg = screenMap.packageName
-            if (pkg.isNotEmpty() && !pkg.startsWith("com.jobstreet") && !pkg.startsWith("com.seek") && pkg != "com.jobaut.app") {
-                log("External package detected ($pkg) - navigating back")
-                service.goBack()
-                delay(1200L)
+
+            // 1. If currently inside JobAut dashboard/settings, do not automate or scroll
+            if (pkg == "com.jobaut.app") {
+                updateStatus(state = BotState.IDLE, lastLog = "Waiting for Jobstreet app to be opened...")
+                delay(1500L)
                 continue
+            }
+
+            // 2. If user is on home screen, launcher, or app switcher, do not interfere or press back
+            if (isSystemOrLauncher(pkg)) {
+                updateStatus(state = BotState.IDLE, lastLog = "Waiting for Jobstreet app in foreground...")
+                delay(1500L)
+                continue
+            }
+
+            // 3. If in another app / external webview
+            if (!isJobstreet(pkg)) {
+                val currentState = _statusFlow.value.state
+                // Only navigate back if we were actively applying and Jobstreet redirected out to external site (Spec §4.2)
+                if (currentJobHash.isNotEmpty() && (currentState == BotState.JOB_DETAILS || currentState == BotState.FILLING_FORM)) {
+                    log("External application redirect detected ($pkg) - navigating back")
+                    service.goBack()
+                    currentJobHash = ""
+                    formSubmitAttempts = 0
+                    updateStatus(state = BotState.SCANNING_FEED, lastLog = "Skipped external redirect to $pkg")
+                    delay(1500L)
+                    continue
+                } else {
+                    // Otherwise simply pause and wait for Jobstreet without disturbing the user
+                    updateStatus(state = BotState.IDLE, lastLog = "Waiting for Jobstreet (active: $pkg)...")
+                    delay(1500L)
+                    continue
+                }
             }
 
             val userProfile = configManager.loadProfile()
@@ -534,6 +561,26 @@ class BotEngine(private val context: Context) {
             currentJobTitle = currentJobTitle ?: current.currentJobTitle,
             lastLog = lastLog ?: current.lastLog
         )
+    }
+
+    private fun isJobstreet(pkg: String): Boolean {
+        if (pkg.isBlank()) return false
+        val lower = pkg.lowercase()
+        return lower.startsWith("com.jobstreet") ||
+                lower.startsWith("com.seek") ||
+                lower.contains("jobstreet")
+    }
+
+    private fun isSystemOrLauncher(pkg: String): Boolean {
+        if (pkg.isBlank()) return true
+        val lower = pkg.lowercase()
+        return lower.contains("launcher") ||
+                lower.contains("systemui") ||
+                lower.contains("quickstep") ||
+                lower.contains("recents") ||
+                lower == "android" ||
+                lower == "com.android.settings" ||
+                lower.contains("googlequicksearchbox")
     }
 
     private fun log(message: String) {

@@ -129,17 +129,19 @@ class JobstreetAccessibilityService : AccessibilityService() {
             return true
         }
 
-        // Gesture fallback: Swipe up (moves content down)
+        // Gesture fallback: Gentle drag up (scrolls content down) in safe middle viewport
+        // Avoid starting near bottom (> 70% height) to prevent triggering Android Home / Recents gesture
         val displayMetrics = resources.displayMetrics
         val width = displayMetrics.widthPixels.toFloat()
         val height = displayMetrics.heightPixels.toFloat()
 
         val startX = width / 2f
-        val startY = height * 0.75f
+        val startY = height * 0.60f
         val endX = width / 2f
-        val endY = height * 0.25f
+        val endY = height * 0.35f
 
-        return dispatchSwipeGesture(startX, startY, endX, endY, 300L)
+        // 550ms duration ensures the touch subsystem registers it as a scroll/drag rather than a fling/gesture
+        return dispatchSwipeGesture(startX, startY, endX, endY, 550L)
     }
 
     /**
@@ -157,17 +159,17 @@ class JobstreetAccessibilityService : AccessibilityService() {
             return true
         }
 
-        // Gesture fallback: Swipe down (moves content up)
+        // Gesture fallback: Gentle drag down (scrolls content up) in safe middle viewport
         val displayMetrics = resources.displayMetrics
         val width = displayMetrics.widthPixels.toFloat()
         val height = displayMetrics.heightPixels.toFloat()
 
         val startX = width / 2f
-        val startY = height * 0.25f
+        val startY = height * 0.35f
         val endX = width / 2f
-        val endY = height * 0.75f
+        val endY = height * 0.60f
 
-        return dispatchSwipeGesture(startX, startY, endX, endY, 300L)
+        return dispatchSwipeGesture(startX, startY, endX, endY, 550L)
     }
 
     /**

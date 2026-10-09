@@ -95,23 +95,21 @@ class JobAutService : Service() {
             }
         }
 
-        // Offload model preparation & extraction from assets to background IO thread
+        // Offload engine initialization to background IO thread
         serviceScope.launch(Dispatchers.IO) {
-            val qwenPath = if (explicitQwen.isNotEmpty()) {
+            val qwenPath = if (explicitQwen.isNotEmpty() && File(explicitQwen).exists()) {
                 explicitQwen
             } else {
-                updateNotification(BotStatus(BotState.IDLE, true, 0, "", "Preparing AI model (Qwen)..."))
                 resolveDefaultModelPath(DEFAULT_QWEN_MODEL)
             }
 
-            val rerankerPath = if (explicitReranker.isNotEmpty()) {
+            val rerankerPath = if (explicitReranker.isNotEmpty() && File(explicitReranker).exists()) {
                 explicitReranker
             } else {
-                updateNotification(BotStatus(BotState.IDLE, true, 0, "", "Preparing Reranker model..."))
                 resolveDefaultModelPath(DEFAULT_RERANKER_MODEL)
             }
 
-            // Launch the engine with resolved paths
+            // Launch the engine with resolved paths (uses fast rule-based fallback if models not imported)
             engine.start(qwenModelPath = qwenPath, rerankerModelPath = rerankerPath)
         }
     }
@@ -239,21 +237,10 @@ class JobAutService : Service() {
             modelsDir.mkdirs()
         }
         val candidate = File(modelsDir, fileName)
-        if (candidate.exists() && candidate.length() > 0) {
-            return candidate.absolutePath
-        }
-
-        // Check if bundled in assets/models/
-        return try {
-            val assetPath = "models/$fileName"
-            assets.open(assetPath).use { input ->
-                candidate.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
+        return if (candidate.exists() && candidate.length() > 0) {
             candidate.absolutePath
-        } catch (e: Exception) {
-            if (candidate.exists()) candidate.absolutePath else ""
+        } else {
+            ""
         }
     }
 

@@ -82,6 +82,8 @@ class UserConfigManager(private val context: Context) {
         val KEY_MIN_SALARY = intPreferencesKey("min_salary")
         val KEY_TARGET_TITLES = stringPreferencesKey("target_titles")
         val KEY_BLACKLISTED_KEYWORDS = stringPreferencesKey("blacklisted_keywords")
+        val KEY_QWEN_MODEL_PATH = stringPreferencesKey("qwen_model_path")
+        val KEY_RERANKER_MODEL_PATH = stringPreferencesKey("reranker_model_path")
     }
 
     private val defaultProfile = UserProfile()
@@ -123,6 +125,28 @@ class UserConfigManager(private val context: Context) {
             preferences[PreferencesKeys.KEY_TARGET_TITLES] = profile.targetTitles.joinToString("\n")
             preferences[PreferencesKeys.KEY_BLACKLISTED_KEYWORDS] = profile.blacklistedKeywords.joinToString("\n")
         }
+    }
+
+    suspend fun saveQwenModelPath(path: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.KEY_QWEN_MODEL_PATH] = path
+        }
+    }
+
+    suspend fun saveRerankerModelPath(path: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.KEY_RERANKER_MODEL_PATH] = path
+        }
+    }
+
+    suspend fun getQwenModelPath(): String {
+        val prefs = context.dataStore.data.first()
+        return prefs[PreferencesKeys.KEY_QWEN_MODEL_PATH] ?: ""
+    }
+
+    suspend fun getRerankerModelPath(): String {
+        val prefs = context.dataStore.data.first()
+        return prefs[PreferencesKeys.KEY_RERANKER_MODEL_PATH] ?: ""
     }
 
     private fun mapPreferencesToProfile(preferences: Preferences): UserProfile {
