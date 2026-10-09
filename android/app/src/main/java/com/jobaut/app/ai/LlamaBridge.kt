@@ -1,12 +1,16 @@
 package com.jobaut.app.ai
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
  * JNI Bridge to native llama.cpp library for on-device inference and scoring.
  */
 object LlamaBridge {
+
+    private val inferenceMutex = Mutex()
 
     init {
         System.loadLibrary("llama-bridge")
@@ -59,7 +63,9 @@ object LlamaBridge {
         maxTokens: Int = 128
     ): String = withContext(Dispatchers.Default) {
         if (ctxPtr == 0L) return@withContext ""
-        nativeGenerate(ctxPtr, prompt, maxTokens)
+        inferenceMutex.withLock {
+            nativeGenerate(ctxPtr, prompt, maxTokens)
+        }
     }
 
     /**
@@ -77,7 +83,10 @@ object LlamaBridge {
         doc: String
     ): Float = withContext(Dispatchers.Default) {
         if (ctxPtr == 0L) return@withContext 0.0f
-        nativeScore(ctxPtr, query, doc)
+        inferenceMutex.withLock {
+            val rawScore = nativeScore(ctxPtr, query, doc)
+            rawScore.coerceIn(0.0f, 1.0f)
+        }
     }
 
     /**
@@ -97,7 +106,9 @@ object LlamaBridge {
      */
     suspend fun free(ctxPtr: Long) = withContext(Dispatchers.Default) {
         if (ctxPtr != 0L) {
-            nativeFree(ctxPtr)
+            inferenceMutex.withLock {
+                nativeFree(ctxPtr)
+            }
         }
     }
 
