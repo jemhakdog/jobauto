@@ -54,6 +54,19 @@ jobs:
           name: JobAut-Native-APK
           path: android/app/build/outputs/apk/**/*.apk
 
+      - name: Publish Direct APK to Continuous Release
+        if: github.event_name != 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Continuous Build (Direct APK)
+          body: |
+            Continuous build from commit ${{ github.sha }} on branch `${{ github.ref_name }}`.
+            
+            Download the raw `.apk` file below directly to install on your Android device (no zip extraction needed).
+          prerelease: true
+          files: android/app/build/outputs/apk/**/*.apk
+
       - name: Upload APKs to GitHub Release
         if: github.event_name == 'release' && github.event.action == 'published'
         uses: softprops/action-gh-release@v2
