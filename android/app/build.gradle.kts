@@ -69,6 +69,10 @@ android {
         }
     }
 
+    androidResources {
+        noCompress += listOf("gguf")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -82,6 +86,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
 
     // Jetpack Compose BOM & UI
     val composeBom = platform("androidx.compose:compose-bom:2024.03.00")
