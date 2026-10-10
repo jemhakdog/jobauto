@@ -7,15 +7,15 @@ import android.view.accessibility.AccessibilityNodeInfo
  * Immutable representation of a UI element extracted from AccessibilityNodeInfo.
  */
 data class UIElement(
-    val node: AccessibilityNodeInfo,
-    val text: String,
-    val contentDescription: String,
-    val className: String,
-    val bounds: Rect,
-    val isClickable: Boolean,
-    val isEditable: Boolean,
-    val isCheckable: Boolean,
-    val isChecked: Boolean
+    val node: AccessibilityNodeInfo? = null,
+    val text: String = "",
+    val contentDescription: String = "",
+    val className: String = "",
+    val bounds: Rect = Rect(),
+    val isClickable: Boolean = false,
+    val isEditable: Boolean = false,
+    val isCheckable: Boolean = false,
+    val isChecked: Boolean = false
 ) {
     /**
      * Center X coordinate of this element's bounds.

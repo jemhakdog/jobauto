@@ -17,26 +17,12 @@ class ScreenMapTest {
         isClickable: Boolean = false,
         isCheckable: Boolean = false
     ): UIElement {
-        // Construct dummy AccessibilityNodeInfo if possible, or create a mock/stub
-        val node: AccessibilityNodeInfo = try {
-            AccessibilityNodeInfo.obtain()
-        } catch (e: Throwable) {
-            val constructor: Constructor<AccessibilityNodeInfo> =
-                AccessibilityNodeInfo::class.java.getDeclaredConstructor()
-            constructor.isAccessible = true
-            constructor.newInstance()
-        }
-
         return UIElement(
-            node = node,
             text = text,
             contentDescription = contentDesc,
             className = className,
-            bounds = Rect(0, 0, 100, 100),
             isClickable = isClickable,
-            isEditable = false,
-            isCheckable = isCheckable,
-            isChecked = false
+            isCheckable = isCheckable
         )
     }
 

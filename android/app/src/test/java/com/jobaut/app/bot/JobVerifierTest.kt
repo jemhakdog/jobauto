@@ -9,7 +9,7 @@ import org.junit.Test
 class JobVerifierTest {
 
     private val sampleProfile = UserProfile(
-        fullName = "Test Candidate",
+        name = "Test Candidate",
         email = "test@example.com",
         phone = "1234567890",
         targetTitles = listOf("Software Engineer", "Android Developer"),

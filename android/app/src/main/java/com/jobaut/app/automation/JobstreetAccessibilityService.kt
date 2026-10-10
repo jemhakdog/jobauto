@@ -65,7 +65,8 @@ class JobstreetAccessibilityService : AccessibilityService() {
      * @param node The accessibility node to click.
      * @return true if the click action or gesture succeeded, false otherwise.
      */
-    fun click(node: AccessibilityNodeInfo): Boolean {
+    fun click(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
         // 1. Try direct click
         if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             return true
@@ -100,7 +101,8 @@ class JobstreetAccessibilityService : AccessibilityService() {
      * @param text The text string to set.
      * @return true if successful, false otherwise.
      */
-    fun setText(node: AccessibilityNodeInfo, text: String): Boolean {
+    fun setText(node: AccessibilityNodeInfo?, text: String): Boolean {
+        if (node == null) return false
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
