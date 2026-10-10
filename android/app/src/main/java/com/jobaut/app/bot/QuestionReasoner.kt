@@ -169,8 +169,11 @@ object QuestionReasoner {
         return null
     }
 
-    private fun buildPrompt(question: String, profile: UserProfile): String {
-        return """Candidate Profile:
+    internal fun buildPrompt(question: String, profile: UserProfile): String {
+        return """<|im_start|>system
+You are a strictly factual job application assistant. You never fabricate experience and only choose from the provided options.<|im_end|>
+<|im_start|>user
+Candidate Profile:
 - Name: ${profile.name}
 - Years of Experience: ${profile.experienceYears}
 - Notice Period: ${profile.noticePeriod}
@@ -181,16 +184,40 @@ Question: $question
 
 Instructions:
 Provide a concise, factual 1-sentence or short-phrase answer from the candidate's perspective.
-Answer:"""
+Answer:<|im_end|>
+<|im_start|>assistant
+"""
     }
 
-    private fun parseLlmResponse(raw: String): String {
-        var clean = raw.trim()
+    internal fun parseLlmResponse(raw: String): String {
+        var clean = raw
+            .replace("<|im_end|>", "")
+            .replace("<|endoftext|>", "")
+            .replace("<|im_start|>", "")
+            .trim()
+
         if (clean.contains("Answer:", ignoreCase = true)) {
             clean = clean.substringAfter("Answer:").trim()
         }
-        val firstLine = clean.lines().firstOrNull { it.isNotBlank() } ?: ""
-        return firstLine.trim('`', '"', '\'', ' ', '\n', '.')
+
+        // Remove markdown code fences e.g. ```text or ```
+        clean = clean.replace(Regex("```[a-zA-Z]*"), "").replace("```", "").trim()
+
+        // Strip leading "assistant" label if present (e.g. "assistant\n...", "assistant: ...")
+        clean = clean.replace(Regex("^(?:assistant:?\\s*)+", RegexOption.IGNORE_CASE), "").trim()
+
+        var firstLine = clean.lines()
+            .map { it.trim() }
+            .firstOrNull { line ->
+                val stripped = line.replaceFirst(Regex("^assistant:?\\s*", RegexOption.IGNORE_CASE), "").trim()
+                stripped.isNotBlank()
+            } ?: ""
+
+        if (firstLine.startsWith("assistant", ignoreCase = true)) {
+            firstLine = firstLine.replaceFirst(Regex("^assistant:?\\s*", RegexOption.IGNORE_CASE), "").trim()
+        }
+
+        return firstLine.trim('`', '"', '\'', '*', ' ', '\n', '\r', '\t', '.')
     }
 
     private suspend fun saveLearnedAnswer(
