@@ -11,7 +11,11 @@ import java.util.regex.Pattern
  */
 object JobVerifier {
 
-    private const val TAG = "JobVerifier"
+    /**
+     * Optional custom scoring provider for testing or custom scorers.
+     * When null, defaults to [LlamaBridge.scoreRelevance].
+     */
+    internal var rerankerScoreProvider: (suspend (Long, String, String) -> Float)? = null
 
     private val DISQUALIFYING_ROLES = listOf(
         "\\bsenior\\b",
@@ -115,11 +119,16 @@ object JobVerifier {
             val candidateQuery = buildCandidateQuery(config)
             val docText = "Job Title: $cleanTitle. Company: $company. Details: ${description.take(500)}"
             try {
-                val score = LlamaBridge.scoreRelevance(rerankerCtxPtr, candidateQuery, docText)
+                val scorer = rerankerScoreProvider
+                val score = scorer?.invoke(rerankerCtxPtr, candidateQuery, docText)
+                    ?: LlamaBridge.scoreRelevance(rerankerCtxPtr, candidateQuery, docText)
                 Log.i(TAG, "Reranker score: $score for '$cleanTitle'")
                 // Relevance threshold 0.40 (matches design spec & python bot prob)
-                return score >= 0.40f
-            } catch (e: Exception) {
+                if (score >= 0.40f) {
+                    return true
+                }
+                Log.i(TAG, "Reranker score $score below threshold 0.40, falling back to target title matching")
+            } catch (e: Throwable) {
                 Log.w(TAG, "Reranker inference error, falling back to keyword matching: ${e.message}")
             }
         }
@@ -133,7 +142,7 @@ object JobVerifier {
         return "Candidate Profile: Junior entry-level software/IT candidate (${config.experienceYears} yrs exp). Target titles: $targets. Remote preferred."
     }
 
-    private fun matchTargetTitles(title: String, targetTitles: List<String>): Boolean {
+    internal fun matchTargetTitles(title: String, targetTitles: List<String>): Boolean {
         if (targetTitles.isEmpty()) return true
 
         val lowerTitle = title.lowercase()
