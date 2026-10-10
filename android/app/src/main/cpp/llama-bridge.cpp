@@ -53,25 +53,7 @@ std::string token_to_piece(const llama_model* model, llama_token token, bool spe
     return piece;
 }
 
-// Helper: Cosine similarity between two float vectors
-float cosine_similarity(const float* vecA, const float* vecB, size_t dim) {
-    if (!vecA || !vecB || dim == 0) {
-        return 0.0f;
-    }
-    double dot = 0.0;
-    double normA = 0.0;
-    double normB = 0.0;
-    for (size_t i = 0; i < dim; ++i) {
-        dot += static_cast<double>(vecA[i]) * static_cast<double>(vecB[i]);
-        normA += static_cast<double>(vecA[i]) * static_cast<double>(vecA[i]);
-        normB += static_cast<double>(vecB[i]) * static_cast<double>(vecB[i]);
-    }
-    double denom = std::sqrt(normA) * std::sqrt(normB);
-    if (denom < 1e-12) {
-        return 0.0f;
-    }
-    return static_cast<float>(dot / denom);
-}
+
 
 } // namespace
 
@@ -83,7 +65,8 @@ Java_com_jobaut_app_ai_LlamaBridge_nativeInitModel(
         jobject /* thiz */,
         jstring jModelPath,
         jint nThreads,
-        jint ctxSize) {
+        jint ctxSize,
+        jboolean isReranker) {
     if (!jModelPath) {
         LOGE("nativeInitModel: modelPath is null");
         return 0;
@@ -97,7 +80,8 @@ Java_com_jobaut_app_ai_LlamaBridge_nativeInitModel(
     std::string modelPath(modelPathChars);
     env->ReleaseStringUTFChars(jModelPath, modelPathChars);
 
-    LOGI("nativeInitModel: loading model from %s (threads=%d, ctxSize=%d)", modelPath.c_str(), nThreads, ctxSize);
+    LOGI("nativeInitModel: loading model from %s (threads=%d, ctxSize=%d, isReranker=%d)",
+         modelPath.c_str(), nThreads, ctxSize, isReranker ? 1 : 0);
 
     llama_backend_init();
 
@@ -112,7 +96,13 @@ Java_com_jobaut_app_ai_LlamaBridge_nativeInitModel(
     ctx_params.n_ctx = static_cast<uint32_t>(ctxSize > 0 ? ctxSize : 1024);
     ctx_params.n_threads = static_cast<int32_t>(nThreads > 0 ? nThreads : 4);
     ctx_params.n_threads_batch = static_cast<int32_t>(nThreads > 0 ? nThreads : 4);
-    ctx_params.embeddings = true;
+
+    if (isReranker) {
+        ctx_params.embeddings = true;
+        ctx_params.pooling_type = LLAMA_POOLING_TYPE_RANK;
+    } else {
+        ctx_params.embeddings = false;
+    }
 
     llama_context* ctx = llama_new_context_with_model(model, ctx_params);
     if (!ctx) {
@@ -125,7 +115,8 @@ Java_com_jobaut_app_ai_LlamaBridge_nativeInitModel(
     bridgeCtx->model = model;
     bridgeCtx->ctx = ctx;
 
-    LOGI("nativeInitModel: successfully initialized bridge context at %p", bridgeCtx);
+    LOGI("nativeInitModel: successfully initialized bridge context at %p (isReranker=%d)",
+         bridgeCtx, isReranker ? 1 : 0);
     return reinterpret_cast<jlong>(bridgeCtx);
 }
 
@@ -277,95 +268,99 @@ Java_com_jobaut_app_ai_LlamaBridge_nativeScore(
 
     llama_kv_cache_clear(ctx);
 
-    std::vector<llama_token> queryTokens = tokenize(model, queryStr, true, true);
-    std::vector<llama_token> docTokens = tokenize(model, docStr, true, true);
-
-    if (queryTokens.empty() || docTokens.empty()) {
-        LOGW("nativeScore: query or doc tokenization is empty");
+    const uint32_t n_ctx = llama_n_ctx(ctx);
+    if (n_ctx == 0) {
+        LOGE("nativeScore: invalid context window size");
         return 0.0f;
     }
 
-    const int32_t n_embd = llama_n_embd(model);
-    const uint32_t n_ctx = llama_n_ctx(ctx);
+    // Determine special tokens for cross-encoder format:
+    // [BOS] query [SEP/EOS] doc [SEP/EOS]
+    llama_token bos_token = llama_token_bos(model);
+    llama_token eos_token = llama_token_eos(model);
+    llama_token sep_token = llama_token_sep(model);
+    if (sep_token < 0) {
+        sep_token = eos_token;
+    }
 
-    // Try computing embedding vector for query
-    std::vector<float> queryEmb(n_embd, 0.0f);
-    std::vector<float> docEmb(n_embd, 0.0f);
+    std::vector<llama_token> queryTokens = tokenize(model, queryStr, false, false);
+    std::vector<llama_token> docTokens = tokenize(model, docStr, false, false);
 
-    llama_batch batch = llama_batch_init(static_cast<int32_t>(n_ctx), 0, 1);
+    if (queryTokens.empty() && docTokens.empty()) {
+        LOGW("nativeScore: both query and doc are empty");
+        return 0.0f;
+    }
 
-    // 1. Process query
-    uint32_t qLen = static_cast<uint32_t>(std::min(queryTokens.size(), static_cast<size_t>(n_ctx)));
-    for (uint32_t i = 0; i < qLen; ++i) {
-        batch.token[i] = queryTokens[i];
+    std::vector<llama_token> promptTokens;
+    promptTokens.reserve(queryTokens.size() + docTokens.size() + 4);
+
+    if (bos_token >= 0) {
+        promptTokens.push_back(bos_token);
+    }
+    promptTokens.insert(promptTokens.end(), queryTokens.begin(), queryTokens.end());
+    if (sep_token >= 0) {
+        promptTokens.push_back(sep_token);
+    }
+    promptTokens.insert(promptTokens.end(), docTokens.begin(), docTokens.end());
+    if (eos_token >= 0) {
+        promptTokens.push_back(eos_token);
+    }
+
+    if (promptTokens.size() > n_ctx) {
+        LOGW("nativeScore: prompt tokens (%zu) exceed context window (%u), truncating document tokens",
+             promptTokens.size(), n_ctx);
+        promptTokens.resize(n_ctx);
+    }
+
+    const uint32_t n_tokens = static_cast<uint32_t>(promptTokens.size());
+    if (n_tokens == 0) {
+        return 0.0f;
+    }
+
+    llama_batch batch = llama_batch_init(static_cast<int32_t>(n_tokens), 0, 1);
+    for (uint32_t i = 0; i < n_tokens; ++i) {
+        batch.token[i] = promptTokens[i];
         batch.pos[i] = static_cast<llama_pos>(i);
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = 0;
-        batch.logits[i] = (i + 1 == qLen) ? 1 : 0;
+        batch.logits[i] = (i + 1 == n_tokens) ? 1 : 0;
     }
-    batch.n_tokens = static_cast<int32_t>(qLen);
+    batch.n_tokens = static_cast<int32_t>(n_tokens);
 
-    bool hasEmbeddings = false;
+    float raw_logit = 0.0f;
+    bool score_obtained = false;
+
     if (llama_decode(ctx, batch) == 0) {
         float* emb = llama_get_embeddings_seq(ctx, 0);
         if (!emb) {
             emb = llama_get_embeddings_ith(ctx, -1);
         }
         if (emb) {
-            std::copy(emb, emb + n_embd, queryEmb.begin());
-            hasEmbeddings = true;
+            raw_logit = emb[0];
+            score_obtained = true;
+        } else {
+            LOGE("nativeScore: failed to retrieve rank embeddings from context");
         }
-    }
-
-    if (hasEmbeddings) {
-        // 2. Process doc
-        llama_kv_cache_clear(ctx);
-        uint32_t dLen = static_cast<uint32_t>(std::min(docTokens.size(), static_cast<size_t>(n_ctx)));
-        for (uint32_t i = 0; i < dLen; ++i) {
-            batch.token[i] = docTokens[i];
-            batch.pos[i] = static_cast<llama_pos>(i);
-            batch.n_seq_id[i] = 1;
-            batch.seq_id[i][0] = 0;
-            batch.logits[i] = (i + 1 == dLen) ? 1 : 0;
-        }
-        batch.n_tokens = static_cast<int32_t>(dLen);
-
-        if (llama_decode(ctx, batch) == 0) {
-            float* emb = llama_get_embeddings_seq(ctx, 0);
-            if (!emb) {
-                emb = llama_get_embeddings_ith(ctx, -1);
-            }
-            if (emb) {
-                std::copy(emb, emb + n_embd, docEmb.begin());
-                llama_batch_free(batch);
-                return cosine_similarity(queryEmb.data(), docEmb.data(), n_embd);
-            }
-        }
+    } else {
+        LOGE("nativeScore: llama_decode failed for cross-encoder prompt");
     }
 
     llama_batch_free(batch);
 
-    // Fallback if model is generative and context has no embeddings enabled:
-    // Compute lexical / token overlap Jaccard similarity score
-    std::vector<llama_token> qSorted = queryTokens;
-    std::vector<llama_token> dSorted = docTokens;
-    std::sort(qSorted.begin(), qSorted.end());
-    qSorted.erase(std::unique(qSorted.begin(), qSorted.end()), qSorted.end());
-    std::sort(dSorted.begin(), dSorted.end());
-    dSorted.erase(std::unique(dSorted.begin(), dSorted.end()), dSorted.end());
-
-    std::vector<llama_token> intersection;
-    std::set_intersection(qSorted.begin(), qSorted.end(),
-                          dSorted.begin(), dSorted.end(),
-                          std::back_inserter(intersection));
-
-    size_t unionSize = qSorted.size() + dSorted.size() - intersection.size();
-    if (unionSize == 0) {
+    if (!score_obtained) {
         return 0.0f;
     }
 
-    float jaccard = static_cast<float>(intersection.size()) / static_cast<float>(unionSize);
-    return jaccard;
+    // Sigmoid transformation: 1.0f / (1.0f + std::exp(-raw_logit))
+    float prob = 1.0f / (1.0f + std::exp(-raw_logit));
+    if (std::isnan(prob)) {
+        prob = 0.0f;
+    } else {
+        prob = std::clamp(prob, 0.0f, 1.0f);
+    }
+
+    LOGI("nativeScore: cross-encoder raw_logit=%.4f -> prob=%.4f", raw_logit, prob);
+    return prob;
 }
 
 JNIEXPORT void JNICALL

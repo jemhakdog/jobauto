@@ -17,7 +17,7 @@ object LlamaBridge {
     }
 
     // Native external declarations
-    external fun nativeInitModel(modelPath: String, nThreads: Int, ctxSize: Int): Long
+    external fun nativeInitModel(modelPath: String, nThreads: Int, ctxSize: Int, isReranker: Boolean): Long
     external fun nativeGenerate(ctxPtr: Long, prompt: String, maxTokens: Int): String
     external fun nativeScore(ctxPtr: Long, query: String, doc: String): Float
     external fun nativeFree(ctxPtr: Long)
@@ -29,14 +29,16 @@ object LlamaBridge {
      * @param modelPath Path to the .gguf model file
      * @param nThreads Number of CPU execution threads (defaults to 4)
      * @param ctxSize Context window size (defaults to 1024)
+     * @param isReranker Whether the model is a cross-encoder reranker (defaults to false)
      * @return Opaque pointer (jlong) to the native context, or 0 on failure
      */
     suspend fun init(
         modelPath: String,
         nThreads: Int = 4,
-        ctxSize: Int = 1024
+        ctxSize: Int = 1024,
+        isReranker: Boolean = false
     ): Long = withContext(Dispatchers.Default) {
-        nativeInitModel(modelPath, nThreads, ctxSize)
+        nativeInitModel(modelPath, nThreads, ctxSize, isReranker)
     }
 
     /**
@@ -45,8 +47,9 @@ object LlamaBridge {
     suspend fun initModel(
         path: String,
         nThreads: Int = 4,
-        ctxSize: Int = 1024
-    ): Long = init(path, nThreads, ctxSize)
+        ctxSize: Int = 1024,
+        isReranker: Boolean = false
+    ): Long = init(path, nThreads, ctxSize, isReranker)
 
     /**
      * Generates a text response for the given prompt.
