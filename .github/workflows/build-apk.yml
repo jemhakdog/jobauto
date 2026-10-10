@@ -48,27 +48,57 @@ jobs:
           cd android
           ./gradlew test assembleDebug assembleRelease --no-daemon --stacktrace
 
-      - name: Upload APK Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: JobAut-Native-APK
-          path: android/app/build/outputs/apk/**/*.apk
+      - name: Prepare Direct Unzipped APKs
+        run: |
+          mkdir -p dist
+          DEBUG_APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" dist/JobAut-debug.apk
+          fi
+          RELEASE_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -f "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" dist/JobAut-release.apk
+          fi
+          echo "Prepared APKs for release:"
+          ls -la dist/
 
-      - name: Publish Direct APK to Continuous Release
+      - name: Publish Direct APK Release for Every Build
+        if: github.event_name != 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-build.${{ github.run_number }}
+          name: JobAut Build #${{ github.run_number }} (Direct APK)
+          body: |
+            ### JobAut Build #${{ github.run_number }}
+            - **Commit:** `${{ github.sha }}`
+            - **Branch:** `${{ github.ref_name }}`
+
+            #### Direct Raw APK Downloads (Not Zipped)
+            Click to download the `.apk` directly to your phone without extracting any zip file:
+            - [JobAut-debug.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/JobAut-debug.apk)
+            - [JobAut-release.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/JobAut-release.apk)
+          prerelease: false
+          files: dist/*.apk
+
+      - name: Update Continuous Rolling Release
         if: github.event_name != 'release'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: continuous
-          name: Continuous Build (Direct APK)
+          name: Latest Build (Direct Unzipped APK)
           body: |
-            Continuous build from commit ${{ github.sha }} on branch `${{ github.ref_name }}`.
-            
-            Download the raw `.apk` file below directly to install on your Android device (no zip extraction needed).
-          prerelease: true
-          files: android/app/build/outputs/apk/**/*.apk
+            Latest direct unzipped APK from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
 
-      - name: Upload APKs to GitHub Release
-        if: github.event_name == 'release' && github.event.action == 'published'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: android/app/build/outputs/apk/**/*.apk
+            - [Download JobAut-debug.apk](https://github.com/${{ github.repository }}/releases/download/continuous/JobAut-debug.apk)
+            - [Download JobAut-release.apk](https://github.com/${{ github.repository }}/releases/download/continuous/JobAut-release.apk)
+          prerelease: true
+          files: dist/*.apk
+
+      - name: Direct APK Summary
+        run: |
+          echo "### 🚀 Unzipped Direct APK Downloads" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Direct raw APKs published (no zip extraction needed):" >> $GITHUB_STEP_SUMMARY
+          echo "- 📱 [Download JobAut-debug.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/JobAut-debug.apk)" >> $GITHUB_STEP_SUMMARY
+          echo "- 📱 [Download JobAut-release.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/JobAut-release.apk)" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 [View All GitHub Releases](https://github.com/${{ github.repository }}/releases)" >> $GITHUB_STEP_SUMMARY
