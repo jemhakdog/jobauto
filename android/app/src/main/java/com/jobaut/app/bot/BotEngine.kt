@@ -375,9 +375,7 @@ class BotEngine(private val context: Context) {
     ) {
         updateStatus(state = BotState.JOB_DETAILS, lastLog = "Viewing job details")
 
-        val applyBtn = screenMap.findButton("quick apply")
-            ?: screenMap.findButton("apply now")
-            ?: screenMap.findButton("apply")
+        val applyBtn = findApplyButton(screenMap)
 
         if (applyBtn != null) {
             // Verify if job should be applied
@@ -396,12 +394,12 @@ class BotEngine(private val context: Context) {
                 service.click(applyBtn.node)
             } else {
                 log("Job did not pass verification, navigating back")
-                service.goBack()
+                navigateBackToFeed(service, screenMap)
                 updateStatus(state = BotState.SCANNING_FEED)
             }
         } else {
             log("No apply button found in details, navigating back")
-            service.goBack()
+            navigateBackToFeed(service, screenMap)
             updateStatus(state = BotState.SCANNING_FEED)
         }
     }
@@ -464,11 +462,35 @@ class BotEngine(private val context: Context) {
             service.scrollDown()
 
             if (consecutiveStallCount >= MAX_CONSECUTIVE_STALLS) {
-                log("Multiple stalls detected in feed, attempting back recovery")
-                service.goBack()
+                log("Multiple stalls detected in feed, scrolling up to refresh feed")
+                service.scrollUp()
                 consecutiveStallCount = 0
             }
         }
+    }
+
+    private fun navigateBackToFeed(service: JobstreetAccessibilityService, screenMap: ScreenMap) {
+        // Prioritize in-app back/up button in the toolbar so we don't exit Jobstreet
+        val backBtn = screenMap.elements.firstOrNull { elem ->
+            (elem.isClickable || elem.className.contains("Button", ignoreCase = true)) && (
+                elem.contentDescription.equals("Navigate up", ignoreCase = true) ||
+                elem.contentDescription.equals("Back", ignoreCase = true) ||
+                elem.text.equals("Back", ignoreCase = true) ||
+                elem.contentDescription.equals("Close", ignoreCase = true) ||
+                elem.text.equals("Close", ignoreCase = true)
+            )
+        }
+
+        if (backBtn != null) {
+            log("Tapping in-app back button: ${backBtn.label}")
+            service.click(backBtn.node)
+        } else if (currentJobHash.isNotEmpty()) {
+            log("Navigating back to feed via global back")
+            service.goBack()
+        } else {
+            log("Already on feed or no active job opened, skipping back to avoid exiting app")
+        }
+        currentJobHash = ""
     }
 
     // --- Screen Detection Helpers ---
@@ -497,21 +519,99 @@ class BotEngine(private val context: Context) {
     }
 
     private fun isJobDetailsScreen(screenMap: ScreenMap): Boolean {
-        val hasApply = screenMap.findButton("quick apply") != null ||
-                screenMap.findButton("apply now") != null ||
-                screenMap.findButton("apply") != null
-        return hasApply && !isApplicationFormScreen(screenMap)
+        // Feed indicators that immediately disqualify a screen from being Job Details
+        if (isFeedScreen(screenMap)) {
+            return false
+        }
+
+        val hasApply = findApplyButton(screenMap) != null
+        val lowerText = screenMap.rawText.lowercase()
+        val hasJobDetailsKeywords = lowerText.contains("job description") ||
+                lowerText.contains("about the role") ||
+                lowerText.contains("about this role") ||
+                lowerText.contains("key responsibilities") ||
+                lowerText.contains("company overview") ||
+                lowerText.contains("report this job") ||
+                lowerText.contains("save job") ||
+                lowerText.contains("posted ")
+
+        return (currentJobHash.isNotEmpty() || hasJobDetailsKeywords) && hasApply && !isApplicationFormScreen(screenMap)
+    }
+
+    private fun isFeedScreen(screenMap: ScreenMap): Boolean {
+        // 1. Presence of Jobstreet bottom navigation tabs
+        val hasNavTabs = screenMap.elements.any { elem ->
+            elem.isClickable && isFeedNavigationTab(elem.label.trim().lowercase())
+        }
+
+        // 2. Presence of search bar or query inputs
+        val hasSearchBar = screenMap.elements.any { elem ->
+            val l = elem.label.lowercase()
+            (elem.isEditable || elem.isClickable) &&
+                    (l.contains("search jobs") || l.contains("what:") || l.contains("where:") || l == "search")
+        }
+
+        // 3. Presence of multiple job cards on screen
+        val cards = findJobCards(screenMap)
+        if (cards.size >= 2) return true
+
+        return hasNavTabs || hasSearchBar
+    }
+
+    private fun isFeedNavigationTab(lower: String): Boolean {
+        return lower in setOf("search", "saved", "saved jobs", "applied", "applications", "my applications", "my activity", "profile") ||
+                lower.startsWith("search\n") ||
+                lower.startsWith("saved\n") ||
+                lower.startsWith("applied\n") ||
+                lower.startsWith("profile\n")
+    }
+
+    private fun isPureActionButton(lower: String): Boolean {
+        return lower in setOf(
+            "apply", "quick apply", "apply now", "continue", "submit", "submit application",
+            "next", "review", "cancel", "done", "close", "maybe later", "filter", "filters"
+        )
+    }
+
+    private fun findApplyButton(screenMap: ScreenMap): UIElement? {
+        val candidates = screenMap.elements.filter { elem ->
+            (elem.isClickable || elem.className.contains("Button", ignoreCase = true)) &&
+                    elem.label.length <= 40 &&
+                    !elem.label.contains("filter", ignoreCase = true)
+        }
+
+        // 1. Exact match on standard apply button phrases
+        val exact = candidates.firstOrNull { elem ->
+            val l = elem.label.trim().lowercase()
+            l == "quick apply" ||
+            l == "apply now" ||
+            l == "apply" ||
+            l == "apply on company site" ||
+            l == "apply on employer site"
+        }
+        if (exact != null) return exact
+
+        // 2. Word-boundary / phrase match
+        return candidates.firstOrNull { elem ->
+            val l = elem.label.trim().lowercase()
+            (l.contains("quick apply") || l.contains("apply now") || l.startsWith("apply ")) &&
+            !l.contains("application") &&
+            !l.contains("applicant") &&
+            !l.contains("applied")
+        }
     }
 
     private fun findJobCards(screenMap: ScreenMap): List<UIElement> {
         return screenMap.filter { elem ->
-            val label = elem.label
-            // Job cards typically have substantial text (> 15 chars) and are clickable
-            elem.isClickable && label.length > 15 &&
-                    !label.contains("search", ignoreCase = true) &&
-                    !label.contains("filter", ignoreCase = true) &&
-                    !label.contains("continue", ignoreCase = true) &&
-                    !label.contains("apply", ignoreCase = true)
+            val label = elem.label.trim()
+            val lower = label.lowercase()
+            elem.isClickable &&
+                    label.length >= 20 &&
+                    !isFeedNavigationTab(lower) &&
+                    !isPureActionButton(lower) &&
+                    !lower.startsWith("search") &&
+                    !lower.contains("filter") &&
+                    !lower.startsWith("sort by")
         }
     }
 

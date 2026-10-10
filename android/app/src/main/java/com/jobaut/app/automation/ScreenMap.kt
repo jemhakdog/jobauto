@@ -47,35 +47,50 @@ class ScreenMap(
     val packageName: String = ""
 ) {
     /**
-     * Finds a clickable or button element whose text or contentDescription matches [name] (case-insensitive).
-     * If no clickable match is found, falls back to any element matching [name].
+     * Finds an interactive element (clickable, checkable, or Button class) whose text or
+     * contentDescription matches [name] (case-insensitive).
+     *
+     * Prioritizes exact matches, then line-exact matches, then word-boundary matches.
+     * Prevents false positives such as "Applications" or "Applied" matching "apply".
      */
     fun findButton(name: String): UIElement? {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return null
 
-        // Priority 1: Clickable or checkable element matching exactly or containing the text
-        val clickableMatch = elements.firstOrNull { elem ->
-            (elem.isClickable || elem.isCheckable) && (
-                elem.text.contains(trimmed, ignoreCase = true) ||
-                elem.contentDescription.contains(trimmed, ignoreCase = true)
+        val interactive = elements.filter { elem ->
+            elem.isClickable || elem.isCheckable || elem.className.contains("Button", ignoreCase = true)
+        }
+
+        // Priority 1: Exact match on text or contentDescription
+        val exactMatch = interactive.firstOrNull { elem ->
+            elem.text.equals(trimmed, ignoreCase = true) ||
+            elem.contentDescription.equals(trimmed, ignoreCase = true)
+        }
+        if (exactMatch != null) return exactMatch
+
+        // Priority 2: Line-exact match (e.g. multi-line button with icon or badge)
+        val lineMatch = interactive.firstOrNull { elem ->
+            elem.text.lines().any { it.trim().equals(trimmed, ignoreCase = true) } ||
+            elem.contentDescription.lines().any { it.trim().equals(trimmed, ignoreCase = true) }
+        }
+        if (lineMatch != null) return lineMatch
+
+        // Priority 3: Word-boundary match for reasonably short labels (buttons, not full cards)
+        val wordRegex = Regex("\\b${Regex.escape(trimmed)}\\b", RegexOption.IGNORE_CASE)
+        val wordMatch = interactive.firstOrNull { elem ->
+            elem.label.length <= 50 && (
+                wordRegex.containsMatchIn(elem.text) ||
+                wordRegex.containsMatchIn(elem.contentDescription)
             )
         }
-        if (clickableMatch != null) return clickableMatch
+        if (wordMatch != null) return wordMatch
 
-        // Priority 2: Button/ImageButton class name match
-        val buttonClassMatch = elements.firstOrNull { elem ->
+        // Priority 4: Button/ImageButton class name containing text
+        return interactive.firstOrNull { elem ->
             elem.className.contains("Button", ignoreCase = true) && (
                 elem.text.contains(trimmed, ignoreCase = true) ||
                 elem.contentDescription.contains(trimmed, ignoreCase = true)
             )
-        }
-        if (buttonClassMatch != null) return buttonClassMatch
-
-        // Priority 3: Any element containing the text/description
-        return elements.firstOrNull { elem ->
-            elem.text.contains(trimmed, ignoreCase = true) ||
-            elem.contentDescription.contains(trimmed, ignoreCase = true)
         }
     }
 
