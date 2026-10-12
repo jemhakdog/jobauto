@@ -456,6 +456,10 @@ class BotEngine(private val context: Context) {
                 service.click(seekBtn.node)
                 switchedToNewToYou = false
                 delay(2000L)
+            } else {
+                log("Seek button not visible immediately; tapping search bar to navigate into full SearchFormScreen")
+                service.click(searchBar.node)
+                delay(1000L)
             }
             return
         }
@@ -480,6 +484,10 @@ class BotEngine(private val context: Context) {
                 service.click(seekBtn.node)
                 switchedToNewToYou = false
                 delay(2000L)
+            } else {
+                log("Seek button not visible after typing; tapping input to ensure Search Form is focused")
+                service.click(input.node)
+                delay(1000L)
             }
         }
     }
@@ -904,14 +912,19 @@ class BotEngine(private val context: Context) {
          * Locates the search bar or search prompt on the Home Screen.
          */
         internal fun findSearchBarElement(screenMap: ScreenMap): UIElement? {
+            // Guard against matching job cards: exclude multi-line or long labels (> 50 chars)
+            val candidates = screenMap.elements.filter { elem ->
+                elem.label.lines().size == 1 && elem.label.length <= 50
+            }
+
             // Priority 1: Specific "continue your job search" element
-            val continueSearch = screenMap.elements.firstOrNull { elem ->
+            val continueSearch = candidates.firstOrNull { elem ->
                 elem.label.contains("continue your job search", ignoreCase = true)
             }
             if (continueSearch != null) return continueSearch
 
-            // Priority 2: Element with "search jobs", "describe what you're looking for", or "what: job title"
-            val searchPrompt = screenMap.elements.firstOrNull { elem ->
+            // Priority 2: Element with explicit search prompts
+            val searchPrompt = candidates.firstOrNull { elem ->
                 val l = elem.label.lowercase().trim()
                 if (isFeedNavigationTab(l)) return@firstOrNull false
                 l == "search jobs" ||
@@ -919,12 +932,12 @@ class BotEngine(private val context: Context) {
                 l.contains("describe what you're looking for") ||
                 l.contains("what: job title") ||
                 l.contains("job title, keyword") ||
-                (l.startsWith("search") && elem.centerY < 600 && (elem.isClickable || elem.isEditable))
+                (l == "search" && elem.centerY < 600 && (elem.isClickable || elem.isEditable))
             }
             if (searchPrompt != null) return searchPrompt
 
             // Priority 3: Editable input in the upper portion of the screen (not bottom nav)
-            return screenMap.elements.firstOrNull { elem ->
+            return candidates.firstOrNull { elem ->
                 (elem.isEditable || elem.className.contains("EditText", ignoreCase = true)) &&
                 elem.centerY < 700
             }
@@ -957,8 +970,16 @@ class BotEngine(private val context: Context) {
         internal fun findSeekButton(screenMap: ScreenMap): UIElement? {
             return screenMap.elements.firstOrNull { elem ->
                 val l = elem.label.trim().lowercase()
+                // Never match elements in lower bottom navigation bar viewport (> 1800)
+                val inSearchArea = elem.centerY < 1800
+                val isShortLabel = elem.label.lines().size <= 2 && elem.label.length <= 30
+                val isSeekMatch = l == "seek" || l.startsWith("seek ") || l.endsWith(" seek") ||
+                        l == "search jobs" || (l == "search" && elem.centerY < 1200)
+
                 (elem.isClickable || elem.className.contains("Button", ignoreCase = true)) &&
-                (l == "seek" || l.contains("seek") || l == "search" || l == "search jobs") &&
+                inSearchArea &&
+                isShortLabel &&
+                isSeekMatch &&
                 !isFeedNavigationTab(l)
             }
         }
@@ -988,7 +1009,11 @@ class BotEngine(private val context: Context) {
                     lower.startsWith("search\n") ||
                     lower.startsWith("saved\n") ||
                     lower.startsWith("applied\n") ||
-                    lower.startsWith("profile\n")
+                    lower.startsWith("profile\n") ||
+                    lower.endsWith("\nsearch") ||
+                    lower.endsWith("\nsaved") ||
+                    lower.endsWith("\napplied") ||
+                    lower.endsWith("\nprofile")
         }
 
         /**
@@ -1015,13 +1040,24 @@ class BotEngine(private val context: Context) {
             if (screenMap.findButton("submit application") != null) return false
             if (isSearchFormScreen(screenMap)) return false
 
-            // Search Results / Feed indicators
-            if (screenMap.rawText.contains("search results", ignoreCase = true)) return false
+            // Disqualify if feed markers are present
+            if (lowerText.contains("search results")) return false
+            if (lowerText.contains("all jobs")) return false
             if (findNewToYouTab(screenMap) != null) return false
 
-            return lowerText.contains("continue your job search") ||
-                    findSearchBarElement(screenMap) != null ||
-                    (lowerText.contains("recommended") && !lowerText.contains("all jobs"))
+            // Disqualify if job cards are present (scrolled feed) unless explicit home search prompt is present
+            val cards = findJobCards(screenMap)
+            if (cards.size >= 2 && !lowerText.contains("continue your job search")) {
+                return false
+            }
+
+            // Rely on explicit home markers
+            val hasExplicitHomeMarker = lowerText.contains("continue your job search") ||
+                    lowerText.lines().any { it.trim().startsWith("hi ") } ||
+                    (lowerText.contains("recommended") && !lowerText.contains("filter"))
+
+            val searchBar = findSearchBarElement(screenMap)
+            return (hasExplicitHomeMarker && searchBar != null) || lowerText.contains("continue your job search")
         }
     }
 }

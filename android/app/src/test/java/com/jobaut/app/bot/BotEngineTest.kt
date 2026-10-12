@@ -205,4 +205,71 @@ class BotEngineTest {
 
         assertTrue("Should detect Search Form screen with Seek button and search prompt", BotEngine.isSearchFormScreen(screenMap))
     }
+
+    @Test
+    fun testScrolledFeedWithJobCardsNotMisclassifiedAsHomeScreen() {
+        val jobCard1 = createElement(
+            text = "Search Engine Optimization Specialist\nTech Solutions Inc.\n₱45,000 / month",
+            className = "android.widget.TextView",
+            isClickable = true,
+            bounds = Rect(50, 200, 1000, 450)
+        )
+        val jobCard2 = createElement(
+            text = "Software Developer\nGlobal Systems\n₱50,000 / month",
+            className = "android.widget.TextView",
+            isClickable = true,
+            bounds = Rect(50, 500, 1000, 750)
+        )
+        // Feed scrolled down: "New to you" tab is off screen, cards are present, no explicit home prompt
+        val screenMap = ScreenMap(listOf(jobCard1, jobCard2), "${jobCard1.text}\n${jobCard2.text}")
+
+        assertFalse("Scrolled feed with candidate job cards must not be misclassified as Home screen", BotEngine.isHomeScreen(screenMap))
+    }
+
+    @Test
+    fun testJobCardStartingWithSearchNotMisclassifiedAsSearchBar() {
+        val jobCardStartingWithSearch = createElement(
+            text = "Search Marketing Specialist\nMarketing Agency\nFull-time",
+            className = "android.widget.TextView",
+            isClickable = true,
+            bounds = Rect(50, 200, 1000, 450)
+        )
+        val screenMap = ScreenMap(listOf(jobCardStartingWithSearch), jobCardStartingWithSearch.text)
+
+        val match = BotEngine.findSearchBarElement(screenMap)
+        assertNull("Multi-line job card starting with 'Search' must not be matched as search bar", match)
+    }
+
+    @Test
+    fun testFindSeekButtonExcludesBottomNav() {
+        val bottomNavSearch = createElement(
+            text = "Search",
+            className = "android.widget.TextView",
+            isClickable = true,
+            bounds = Rect(0, 2000, 200, 2200) // Lower viewport (> 1800)
+        )
+        val screenMap = ScreenMap(listOf(bottomNavSearch), "Search")
+
+        val match = BotEngine.findSeekButton(screenMap)
+        assertNull("Seek button lookup must exclude bottom navigation tabs", match)
+    }
+
+    @Test
+    fun testIsHomeScreenDisqualifiedByAllJobsTab() {
+        val allJobsText = createElement(
+            text = "All jobs",
+            className = "android.widget.TextView",
+            isClickable = true,
+            bounds = Rect(50, 300, 300, 400)
+        )
+        val searchPrompt = createElement(
+            text = "Search jobs",
+            className = "android.widget.TextView",
+            isClickable = true,
+            bounds = Rect(50, 100, 1000, 250)
+        )
+        val screenMap = ScreenMap(listOf(searchPrompt, allJobsText), "Search jobs\nAll jobs")
+
+        assertFalse("Screen containing 'All jobs' tab must not be classified as Home screen", BotEngine.isHomeScreen(screenMap))
+    }
 }
