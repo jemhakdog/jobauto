@@ -15,17 +15,19 @@ data class UIElement(
     val isClickable: Boolean = false,
     val isEditable: Boolean = false,
     val isCheckable: Boolean = false,
-    val isChecked: Boolean = false
+    val isChecked: Boolean = false,
+    val overrideCenterX: Int? = null,
+    val overrideCenterY: Int? = null
 ) {
     /**
      * Center X coordinate of this element's bounds.
      */
-    val centerX: Int get() = bounds.centerX()
+    val centerX: Int get() = overrideCenterX ?: bounds.centerX()
 
     /**
      * Center Y coordinate of this element's bounds.
      */
-    val centerY: Int get() = bounds.centerY()
+    val centerY: Int get() = overrideCenterY ?: bounds.centerY()
 
     /**
      * Convenient display string representation.

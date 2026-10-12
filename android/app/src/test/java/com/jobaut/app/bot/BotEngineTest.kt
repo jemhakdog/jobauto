@@ -19,7 +19,9 @@ class BotEngineTest {
         isClickable: Boolean = false,
         isEditable: Boolean = false,
         isCheckable: Boolean = false,
-        bounds: Rect = Rect()
+        bounds: Rect = Rect(),
+        centerX: Int? = null,
+        centerY: Int? = null
     ): UIElement {
         return UIElement(
             text = text,
@@ -28,7 +30,9 @@ class BotEngineTest {
             bounds = bounds,
             isClickable = isClickable,
             isEditable = isEditable,
-            isCheckable = isCheckable
+            isCheckable = isCheckable,
+            overrideCenterX = centerX,
+            overrideCenterY = centerY
         )
     }
 
@@ -38,13 +42,15 @@ class BotEngineTest {
             text = "New to you",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(200, 300, 400, 400)
+            bounds = Rect(200, 300, 400, 400),
+            centerY = 350
         )
         val allJobsTab = createElement(
             text = "All jobs",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(0, 300, 200, 400)
+            bounds = Rect(0, 300, 200, 400),
+            centerY = 350
         )
         val screenMap = ScreenMap(listOf(allJobsTab, newToYouTab), "All jobs New to you")
 
@@ -59,7 +65,8 @@ class BotEngineTest {
             text = "New to you",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(0, 1900, 200, 2100) // Lower portion (> 700)
+            bounds = Rect(0, 1900, 200, 2100), // Lower portion (> 700)
+            centerY = 2000
         )
         val screenMap = ScreenMap(listOf(footerText), "New to you")
 
@@ -73,7 +80,8 @@ class BotEngineTest {
             text = "Continue your job search",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 200, 1000, 350)
+            bounds = Rect(50, 200, 1000, 350),
+            centerY = 275
         )
         val screenMap = ScreenMap(listOf(continueSearch), "Continue your job search")
 
@@ -88,7 +96,8 @@ class BotEngineTest {
             text = "Search jobs",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 200, 1000, 350)
+            bounds = Rect(50, 200, 1000, 350),
+            centerY = 275
         )
         val screenMap = ScreenMap(listOf(searchPrompt), "Search jobs")
 
@@ -103,7 +112,8 @@ class BotEngineTest {
             text = "Search",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(0, 2000, 200, 2200)
+            bounds = Rect(0, 2000, 200, 2200),
+            centerY = 2100
         )
         val screenMap = ScreenMap(listOf(bottomNavSearch), "Search")
 
@@ -117,7 +127,8 @@ class BotEngineTest {
             text = "",
             className = "android.widget.EditText",
             isEditable = true,
-            bounds = Rect(50, 150, 900, 300)
+            bounds = Rect(50, 150, 900, 300),
+            centerY = 225
         )
         val screenMap = ScreenMap(listOf(input), "")
 
@@ -131,13 +142,15 @@ class BotEngineTest {
             text = "Seek",
             className = "android.widget.Button",
             isClickable = true,
-            bounds = Rect(50, 500, 1000, 650)
+            bounds = Rect(50, 500, 1000, 650),
+            centerY = 575
         )
         val bottomNavSearch = createElement(
             text = "Search",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(0, 2000, 200, 2200)
+            bounds = Rect(0, 2000, 200, 2200),
+            centerY = 2100
         )
         val screenMap = ScreenMap(listOf(seekBtn, bottomNavSearch), "Seek Search")
 
@@ -152,7 +165,8 @@ class BotEngineTest {
             text = "Clear all",
             className = "android.widget.Button",
             isClickable = true,
-            bounds = Rect(800, 200, 1000, 300)
+            bounds = Rect(800, 200, 1000, 300),
+            centerY = 250
         )
         val screenMap = ScreenMap(listOf(clearBtn), "Clear all")
 
@@ -167,7 +181,8 @@ class BotEngineTest {
             text = "Continue your job search",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 200, 1000, 350)
+            bounds = Rect(50, 200, 1000, 350),
+            centerY = 275
         )
         val screenMap = ScreenMap(listOf(continueSearch), "Continue your job search\nRecommended jobs")
 
@@ -180,7 +195,8 @@ class BotEngineTest {
             text = "New to you",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(200, 300, 400, 400)
+            bounds = Rect(200, 300, 400, 400),
+            centerY = 350
         )
         val screenMap = ScreenMap(listOf(newToYouTab), "Search results\nNew to you")
 
@@ -193,13 +209,15 @@ class BotEngineTest {
             text = "",
             className = "android.widget.EditText",
             isEditable = true,
-            bounds = Rect(50, 150, 900, 300)
+            bounds = Rect(50, 150, 900, 300),
+            centerY = 225
         )
         val seekBtn = createElement(
             text = "Seek",
             className = "android.widget.Button",
             isClickable = true,
-            bounds = Rect(50, 500, 1000, 650)
+            bounds = Rect(50, 500, 1000, 650),
+            centerY = 575
         )
         val screenMap = ScreenMap(listOf(input, seekBtn), "Describe what you're looking for\nSeek")
 
@@ -212,13 +230,15 @@ class BotEngineTest {
             text = "Search Engine Optimization Specialist\nTech Solutions Inc.\n₱45,000 / month",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 200, 1000, 450)
+            bounds = Rect(50, 200, 1000, 450),
+            centerY = 325
         )
         val jobCard2 = createElement(
             text = "Software Developer\nGlobal Systems\n₱50,000 / month",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 500, 1000, 750)
+            bounds = Rect(50, 500, 1000, 750),
+            centerY = 625
         )
         // Feed scrolled down: "New to you" tab is off screen, cards are present, no explicit home prompt
         val screenMap = ScreenMap(listOf(jobCard1, jobCard2), "${jobCard1.text}\n${jobCard2.text}")
@@ -232,7 +252,8 @@ class BotEngineTest {
             text = "Search Marketing Specialist\nMarketing Agency\nFull-time",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 200, 1000, 450)
+            bounds = Rect(50, 200, 1000, 450),
+            centerY = 325
         )
         val screenMap = ScreenMap(listOf(jobCardStartingWithSearch), jobCardStartingWithSearch.text)
 
@@ -246,7 +267,8 @@ class BotEngineTest {
             text = "Search",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(0, 2000, 200, 2200) // Lower viewport (> 1800)
+            bounds = Rect(0, 2000, 200, 2200), // Lower viewport (> 1800)
+            centerY = 2100
         )
         val screenMap = ScreenMap(listOf(bottomNavSearch), "Search")
 
@@ -260,13 +282,15 @@ class BotEngineTest {
             text = "All jobs",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 300, 300, 400)
+            bounds = Rect(50, 300, 300, 400),
+            centerY = 350
         )
         val searchPrompt = createElement(
             text = "Search jobs",
             className = "android.widget.TextView",
             isClickable = true,
-            bounds = Rect(50, 100, 1000, 250)
+            bounds = Rect(50, 100, 1000, 250),
+            centerY = 175
         )
         val screenMap = ScreenMap(listOf(searchPrompt, allJobsText), "Search jobs\nAll jobs")
 
