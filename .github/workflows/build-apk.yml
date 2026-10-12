@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - 'feature/**'
+      - '**'
   release:
     types:
       - published
@@ -62,12 +61,20 @@ jobs:
           echo "Prepared APKs for release:"
           ls -la dist/
 
+      - name: Upload APKs as Run Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: JobAut-APKs-build-${{ github.run_number }}
+          path: dist/*.apk
+          retention-days: 30
+
       - name: Publish Direct APK Release for Every Build
         if: github.event_name != 'release'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0-build.${{ github.run_number }}
           name: JobAut Build #${{ github.run_number }} (Direct APK)
+          make_latest: true
           body: |
             ### JobAut Build #${{ github.run_number }}
             - **Commit:** `${{ github.sha }}`
