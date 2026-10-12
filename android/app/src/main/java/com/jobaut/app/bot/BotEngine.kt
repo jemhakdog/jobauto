@@ -739,13 +739,6 @@ class BotEngine(private val context: Context) {
         return hasNavTabs || hasSearchBar || hasFeedTabs
     }
 
-    private fun isPureActionButton(lower: String): Boolean {
-        return lower in setOf(
-            "apply", "quick apply", "apply now", "continue", "submit", "submit application",
-            "next", "review", "cancel", "done", "close", "maybe later", "filter", "filters"
-        )
-    }
-
     private fun findApplyButton(screenMap: ScreenMap): UIElement? {
         val candidates = screenMap.elements.filter { elem ->
             (elem.isClickable || elem.className.contains("Button", ignoreCase = true)) &&
@@ -772,62 +765,6 @@ class BotEngine(private val context: Context) {
             !l.contains("applicant") &&
             !l.contains("applied")
         }
-    }
-
-    private fun findJobCards(screenMap: ScreenMap): List<UIElement> {
-        return screenMap.elements.filter { elem ->
-            isCandidateJobElement(elem)
-        }
-    }
-
-    private fun isCandidateJobElement(elem: UIElement): Boolean {
-        val label = elem.label.trim()
-        val lower = label.lowercase()
-
-        // Ignore empty or too short text (< 5 chars) or excessively long blocks (> 300 chars)
-        if (label.length !in 5..300) return false
-
-        // Must contain letters
-        if (!label.any { it.isLetter() }) return false
-
-        // Exclude bottom navigation bar tabs
-        if (isFeedNavigationTab(lower)) return false
-
-        // Exclude search bar, filter bar, sorting headers
-        if (isSearchOrFilter(lower)) return false
-
-        // Exclude action buttons (apply, done, close, etc.)
-        if (isPureActionButton(lower)) return false
-
-        // Exclude standalone metadata (salary, time, badges, employment types)
-        if (isJobMetadata(lower, label)) return false
-
-        return true
-    }
-
-    private fun isSearchOrFilter(lower: String): Boolean {
-        return lower.startsWith("search") ||
-                lower.contains("filter") ||
-                lower.startsWith("sort by") ||
-                lower.startsWith("what:") ||
-                lower.startsWith("where:") ||
-                lower == "clear all" ||
-                lower.contains("all jobs") ||
-                lower.contains("new to you")
-    }
-
-    private fun isJobMetadata(lower: String, rawLabel: String): Boolean {
-        // Multi-line cards containing description/title + salary are legitimate cards
-        if (rawLabel.lines().size >= 2 && rawLabel.length >= 35) {
-            return false
-        }
-        if (lower.length < 3) return true
-        val isSalary = lower.contains("₱") || lower.contains("php") || lower.contains("/mo") || lower.contains("/yr") || lower.contains("per month") || lower.contains("per year")
-        val isTime = lower.endsWith("ago") || lower.contains("just posted")
-        val isWorkType = lower in setOf("full-time", "full time", "part-time", "part time", "contract", "temporary", "internship", "permanent", "remote", "hybrid", "on-site")
-        val isBadgeOrAction = lower in setOf("quick apply", "easily apply", "save", "save job", "share", "dismiss", "report", "promoted", "featured") ||
-                lower.contains("applicant") || lower.contains("early applicant")
-        return isSalary || isTime || isWorkType || isBadgeOrAction
     }
 
     private fun extractInputLabel(screenMap: ScreenMap, input: UIElement): String {
@@ -1014,6 +951,69 @@ class BotEngine(private val context: Context) {
                     lower.endsWith("\nsaved") ||
                     lower.endsWith("\napplied") ||
                     lower.endsWith("\nprofile")
+        }
+
+        internal fun isPureActionButton(lower: String): Boolean {
+            return lower in setOf(
+                "apply", "quick apply", "apply now", "continue", "submit", "submit application",
+                "next", "review", "cancel", "done", "close", "maybe later", "filter", "filters"
+            )
+        }
+
+        internal fun findJobCards(screenMap: ScreenMap): List<UIElement> {
+            return screenMap.elements.filter { elem ->
+                isCandidateJobElement(elem)
+            }
+        }
+
+        internal fun isCandidateJobElement(elem: UIElement): Boolean {
+            val label = elem.label.trim()
+            val lower = label.lowercase()
+
+            // Ignore empty or too short text (< 5 chars) or excessively long blocks (> 300 chars)
+            if (label.length !in 5..300) return false
+
+            // Must contain letters
+            if (!label.any { it.isLetter() }) return false
+
+            // Exclude bottom navigation bar tabs
+            if (isFeedNavigationTab(lower)) return false
+
+            // Exclude search bar, filter bar, sorting headers
+            if (isSearchOrFilter(lower)) return false
+
+            // Exclude action buttons (apply, done, close, etc.)
+            if (isPureActionButton(lower)) return false
+
+            // Exclude standalone metadata (salary, time, badges, employment types)
+            if (isJobMetadata(lower, label)) return false
+
+            return true
+        }
+
+        internal fun isSearchOrFilter(lower: String): Boolean {
+            return lower.startsWith("search") ||
+                    lower.contains("filter") ||
+                    lower.startsWith("sort by") ||
+                    lower.startsWith("what:") ||
+                    lower.startsWith("where:") ||
+                    lower == "clear all" ||
+                    lower.contains("all jobs") ||
+                    lower.contains("new to you")
+        }
+
+        internal fun isJobMetadata(lower: String, rawLabel: String): Boolean {
+            // Multi-line cards containing description/title + salary are legitimate cards
+            if (rawLabel.lines().size >= 2 && rawLabel.length >= 35) {
+                return false
+            }
+            if (lower.length < 3) return true
+            val isSalary = lower.contains("₱") || lower.contains("php") || lower.contains("/mo") || lower.contains("/yr") || lower.contains("per month") || lower.contains("per year")
+            val isTime = lower.endsWith("ago") || lower.contains("just posted")
+            val isWorkType = lower in setOf("full-time", "full time", "part-time", "part time", "contract", "temporary", "internship", "permanent", "remote", "hybrid", "on-site")
+            val isBadgeOrAction = lower in setOf("quick apply", "easily apply", "save", "save job", "share", "dismiss", "report", "promoted", "featured") ||
+                    lower.contains("applicant") || lower.contains("early applicant")
+            return isSalary || isTime || isWorkType || isBadgeOrAction
         }
 
         /**

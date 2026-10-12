@@ -11,6 +11,8 @@ import java.util.regex.Pattern
  */
 object JobVerifier {
 
+    private const val TAG = "JobVerifier"
+
     /**
      * Optional custom scoring provider for testing or custom scorers.
      * When null, defaults to [LlamaBridge.scoreRelevance].
