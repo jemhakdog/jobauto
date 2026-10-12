@@ -310,6 +310,9 @@ Java_com_jobaut_app_ai_LlamaBridge_nativeScore(
         LOGW("nativeScore: prompt tokens (%zu) exceed context window (%u), truncating document tokens",
              promptTokens.size(), n_ctx);
         promptTokens.resize(n_ctx);
+        if (eos_token >= 0 && n_ctx > 0) {
+            promptTokens[n_ctx - 1] = eos_token;
+        }
     }
 
     const uint32_t n_tokens = static_cast<uint32_t>(promptTokens.size());

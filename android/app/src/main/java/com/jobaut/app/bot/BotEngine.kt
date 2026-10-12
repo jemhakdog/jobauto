@@ -980,7 +980,7 @@ class BotEngine(private val context: Context) {
                 inSearchArea &&
                 isShortLabel &&
                 isSeekMatch &&
-                !isFeedNavigationTab(l)
+                !(isFeedNavigationTab(l) && elem.centerY >= 1800)
             }
         }
 

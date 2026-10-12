@@ -196,8 +196,9 @@ Answer:<|im_end|>
             .replace("<|im_start|>", "")
             .trim()
 
-        if (clean.contains("Answer:", ignoreCase = true)) {
-            clean = clean.substringAfter("Answer:").trim()
+        val answerIdx = clean.indexOf("Answer:", ignoreCase = true)
+        if (answerIdx >= 0) {
+            clean = clean.substring(answerIdx + "Answer:".length).trim()
         }
 
         // Remove markdown code fences e.g. ```text or ```

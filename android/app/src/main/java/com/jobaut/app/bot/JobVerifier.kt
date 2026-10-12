@@ -128,6 +128,9 @@ object JobVerifier {
                     return true
                 }
                 Log.i(TAG, "Reranker score $score below threshold 0.40, falling back to target title matching")
+                if (config.targetTitles.isEmpty()) {
+                    return false
+                }
             } catch (e: Throwable) {
                 Log.w(TAG, "Reranker inference error, falling back to keyword matching: ${e.message}")
             }
