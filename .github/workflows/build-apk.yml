@@ -42,6 +42,21 @@ jobs:
       - name: Ensure Gradlew Executable
         run: chmod +x android/gradlew
 
+      - name: Ensure Persistent Signing Keystore
+        run: |
+          if [ ! -f android/app/jobaut.keystore ]; then
+            echo "Generating persistent keystore for consistent release signatures..."
+            keytool -genkeypair -v -keystore android/app/jobaut.keystore \
+              -alias jobautkey -storepass jobautpass -keypass jobautpass \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=JobAut,OU=Mobile,O=JobAut,C=US"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add android/app/jobaut.keystore
+            git commit -m "chore(ci): persist signing keystore for consistent app updates [skip ci]" || true
+            git push origin HEAD || true
+          fi
+
       - name: Build Android APKs
         run: |
           cd android
