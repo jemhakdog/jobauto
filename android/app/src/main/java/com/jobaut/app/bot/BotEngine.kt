@@ -434,8 +434,8 @@ class BotEngine(private val context: Context) {
         profile: UserProfile
     ) {
         val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "Software" } ?: "Software"
-        updateStatus(state = BotState.SCANNING_FEED, lastLog = "Home screen detected, searching for '$targetKeyword'")
-        log("Home Screen detected: initiating job search for keyword '$targetKeyword'")
+        updateStatus(state = BotState.SCANNING_FEED, lastLog = "Home screen detected, opening search")
+        log("Home Screen detected: opening search bar for keyword '$targetKeyword'")
         searchFormStallCount = 0
 
         val searchBar = findSearchBarElement(screenMap)
@@ -445,53 +445,10 @@ class BotEngine(private val context: Context) {
             return
         }
 
-        // Case 1: Search bar element is directly editable on the home screen
-        if (searchBar.isEditable || searchBar.className.contains("EditText", ignoreCase = true)) {
-            log("Search bar is directly editable, entering '$targetKeyword'")
-            service.setText(searchBar.node, targetKeyword)
-            delay(500L)
-
-            val freshScreen = service.getScreenMap()
-            val seekBtn = findSeekButton(freshScreen) ?: findSeekButton(screenMap)
-            if (seekBtn != null) {
-                log("Tapping '${seekBtn.label}' button to execute search")
-                service.click(seekBtn.node)
-                switchedToNewToYou = false
-                delay(2000L)
-            } else {
-                log("Seek button not visible immediately; tapping search bar to navigate into full SearchFormScreen")
-                service.click(searchBar.node)
-                delay(1000L)
-            }
-            return
-        }
-
-        // Case 2: Search bar is a tap target (e.g. "continue your job search" or "Search jobs")
+        // Tap search bar to open full Search Form screen, matching Python flow 1:1
         log("Tapping search bar on Home screen: '${searchBar.label}'")
         service.click(searchBar.node)
-        delay(1000L)
-
-        // After tapping, check if keyword input or seek button is immediately available
-        val postClickScreen = service.getScreenMap()
-        val input = findKeywordInput(postClickScreen)
-        if (input != null) {
-            log("Entering target keyword '$targetKeyword' into search input")
-            service.setText(input.node, targetKeyword)
-            delay(500L)
-
-            val seekScreen = service.getScreenMap()
-            val seekBtn = findSeekButton(seekScreen)
-            if (seekBtn != null) {
-                log("Tapping '${seekBtn.label}' button to execute search")
-                service.click(seekBtn.node)
-                switchedToNewToYou = false
-                delay(2000L)
-            } else {
-                log("Seek button not visible after typing; tapping input to ensure Search Form is focused")
-                service.click(input.node)
-                delay(1000L)
-            }
-        }
+        delay(1500L)
     }
 
     private suspend fun handleSearchFormScreen(
@@ -529,6 +486,11 @@ class BotEngine(private val context: Context) {
         val targetInput = input ?: service.getScreenMap().let { findKeywordInput(it) }
         if (targetInput != null) {
             if (!keywordMatches) {
+                // Focus the input by tapping first, matching Python
+                log("Focusing keyword input in search form")
+                service.click(targetInput.node)
+                delay(300L)
+
                 log("Entering target keyword '$targetKeyword' into search form")
                 service.setText(targetInput.node, targetKeyword)
                 delay(600L)
@@ -973,7 +935,10 @@ class BotEngine(private val context: Context) {
             // climbs to clickable parents or gesture taps the center coordinates.
             val seekElem = screenMap.elements.firstOrNull { elem ->
                 val l = elem.label.trim().lowercase()
-                val isSeekMatch = l == "seek" || l.startsWith("seek ") || l.endsWith(" seek") ||
+                // Guard: Disqualify brand logos / headers (e.g. "Jobstreet by SEEK", "Powered by SEEK")
+                if (l.contains("jobstreet") || l.contains("by seek") || l == "seek asia") return@firstOrNull false
+
+                val isSeekMatch = l == "seek" || l.startsWith("seek ") ||
                         l.startsWith("seek(") || l.startsWith("seek (") || l.contains("seek jobs")
                 isSeekMatch && elem.label.lines().size <= 3 && elem.label.length <= 35
             }
@@ -987,14 +952,13 @@ class BotEngine(private val context: Context) {
             }
             if (actionPhraseElem != null) return actionPhraseElem
 
-            // Priority 3: Interactive button labeled "search" in the upper/middle viewport (excluding bottom nav tabs)
+            // Priority 3: Element labeled "search" in the upper/middle viewport (excluding bottom nav tabs)
             return screenMap.elements.firstOrNull { elem ->
                 val l = elem.label.trim().lowercase()
                 val isSearchLabel = l == "search"
                 val inSearchArea = elem.centerY < 1400
                 val notBottomNav = !(isFeedNavigationTab(l) && elem.centerY >= 1800)
-                (elem.isClickable || elem.className.contains("Button", ignoreCase = true)) &&
-                        isSearchLabel && inSearchArea && notBottomNav
+                isSearchLabel && inSearchArea && notBottomNav
             }
         }
 
@@ -1101,11 +1065,7 @@ class BotEngine(private val context: Context) {
             if (lower.contains("application submitted") || lower.contains("you've applied")) return false
             if (screenMap.findButton("submit application") != null) return false
 
-            val hasSearchFormMarkers = lower.contains("describe what you're looking for") ||
-                    lower.contains("clear all") ||
-                    (findSeekButton(screenMap) != null && (findKeywordInput(screenMap) != null || lower.contains("what:")))
-
-            return hasSearchFormMarkers
+            return lower.contains("describe what you're looking for") || lower.contains("clear all")
         }
 
         /**

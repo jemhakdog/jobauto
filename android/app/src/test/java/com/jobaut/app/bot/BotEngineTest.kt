@@ -329,4 +329,34 @@ class BotEngineTest {
         assertNotNull("Should match Seek button with job count", match)
         assertEquals("Seek (150 jobs)", match?.label)
     }
+
+    @Test
+    fun testFindSeekButtonIgnoresBrandHeaders() {
+        val brand = createElement(
+            text = "Jobstreet by SEEK",
+            className = "android.widget.TextView",
+            centerY = 100
+        )
+        val screenMap = ScreenMap(listOf(brand), "Jobstreet by SEEK")
+        assertNull("Seek button lookup must ignore brand header", BotEngine.findSeekButton(screenMap))
+    }
+
+    @Test
+    fun testHomeScreenWithSeekBrandHeaderNotClassifiedAsSearchForm() {
+        val brandHeader = createElement(
+            text = "Jobstreet by SEEK",
+            className = "android.widget.TextView",
+            centerY = 100
+        )
+        val continueSearch = createElement(
+            text = "Continue your job search",
+            className = "android.widget.TextView",
+            isClickable = true,
+            centerY = 275
+        )
+        val screenMap = ScreenMap(listOf(brandHeader, continueSearch), "Jobstreet by SEEK\nContinue your job search")
+
+        assertFalse("Home screen with Jobstreet by SEEK brand header must NOT be classified as search form", BotEngine.isSearchFormScreen(screenMap))
+        assertTrue("Should be identified as Home Screen", BotEngine.isHomeScreen(screenMap))
+    }
 }
