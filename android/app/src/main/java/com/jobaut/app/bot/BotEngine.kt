@@ -77,6 +77,9 @@ class BotEngine(private val context: Context) {
     private var formSubmitAttempts = 0
     private var jobDetailsWaitCount = 0
 
+    // Search and tab selection state
+    internal var switchedToNewToYou = false
+
     /**
      * Starts the autonomous bot loop.
      * Runs strictly on [Dispatchers.Default].
@@ -89,6 +92,12 @@ class BotEngine(private val context: Context) {
 
         loopJob = scope.launch(Dispatchers.Default) {
             try {
+                switchedToNewToYou = false
+                currentJobHash = ""
+                consecutiveStallCount = 0
+                formSubmitAttempts = 0
+                jobDetailsWaitCount = 0
+
                 updateStatus(state = BotState.SCANNING_FEED, isRunning = true, lastLog = "Bot engine starting...")
 
                 // Initialize native models if paths provided
@@ -121,13 +130,14 @@ class BotEngine(private val context: Context) {
         log("Stopping bot engine...")
         loopJob?.cancel()
         loopJob = null
+        switchedToNewToYou = false
     }
 
     private suspend fun initModels(qwenPath: String, rerankerPath: String) {
         if (qwenPath.isNotBlank() && qwenCtxPtr == 0L) {
             log("Initializing Qwen model from $qwenPath")
             try {
-                qwenCtxPtr = LlamaBridge.initModel(qwenPath, nThreads = 4, ctxSize = 1024)
+                qwenCtxPtr = LlamaBridge.initModel(qwenPath, nThreads = 4, ctxSize = 1024, isReranker = false)
                 log("Qwen model initialized (ptr: $qwenCtxPtr)")
             } catch (e: Exception) {
                 log("Failed initializing Qwen model: ${e.message}")
@@ -137,7 +147,7 @@ class BotEngine(private val context: Context) {
         if (rerankerPath.isNotBlank() && rerankerCtxPtr == 0L) {
             log("Initializing Reranker model from $rerankerPath")
             try {
-                rerankerCtxPtr = LlamaBridge.initModel(rerankerPath, nThreads = 2, ctxSize = 512)
+                rerankerCtxPtr = LlamaBridge.initModel(rerankerPath, nThreads = 2, ctxSize = 512, isReranker = true)
                 log("Reranker model initialized (ptr: $rerankerCtxPtr)")
             } catch (e: Exception) {
                 log("Failed initializing Reranker model: ${e.message}")
@@ -146,6 +156,7 @@ class BotEngine(private val context: Context) {
     }
 
     private suspend fun cleanup() {
+        switchedToNewToYou = false
         if (qwenCtxPtr != 0L) {
             val ptr = qwenCtxPtr
             qwenCtxPtr = 0L
@@ -230,6 +241,16 @@ class BotEngine(private val context: Context) {
                 // Job Details screen (has "Apply", "Quick Apply", or "Apply now")
                 isJobDetailsScreen(screenMap) -> {
                     handleJobDetailsScreen(service, screenMap, userProfile)
+                }
+
+                // Search Form screen (search query entry form with Seek button)
+                isSearchFormScreen(screenMap) -> {
+                    handleSearchFormScreen(service, screenMap, userProfile)
+                }
+
+                // Home screen (search bar prompt e.g. "continue your job search")
+                isHomeScreen(screenMap) -> {
+                    handleHomeScreen(service, screenMap, userProfile)
                 }
 
                 // Job Feed screen (job list / search results)
@@ -406,6 +427,114 @@ class BotEngine(private val context: Context) {
         }
     }
 
+    private suspend fun handleHomeScreen(
+        service: JobstreetAccessibilityService,
+        screenMap: ScreenMap,
+        profile: UserProfile
+    ) {
+        val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "Software" } ?: "Software"
+        updateStatus(state = BotState.SCANNING_FEED, lastLog = "Home screen detected, searching for '$targetKeyword'")
+        log("Home Screen detected: initiating job search for keyword '$targetKeyword'")
+
+        val searchBar = findSearchBarElement(screenMap)
+        if (searchBar == null) {
+            log("No search bar element found on Home screen, scrolling to reveal it")
+            service.scrollDown()
+            return
+        }
+
+        // Case 1: Search bar element is directly editable on the home screen
+        if (searchBar.isEditable || searchBar.className.contains("EditText", ignoreCase = true)) {
+            log("Search bar is directly editable, entering '$targetKeyword'")
+            service.setText(searchBar.node, targetKeyword)
+            delay(500L)
+
+            val freshScreen = service.getScreenMap()
+            val seekBtn = findSeekButton(freshScreen) ?: findSeekButton(screenMap)
+            if (seekBtn != null) {
+                log("Tapping '${seekBtn.label}' button to execute search")
+                service.click(seekBtn.node)
+                switchedToNewToYou = false
+                delay(2000L)
+            }
+            return
+        }
+
+        // Case 2: Search bar is a tap target (e.g. "continue your job search" or "Search jobs")
+        log("Tapping search bar on Home screen: '${searchBar.label}'")
+        service.click(searchBar.node)
+        delay(1000L)
+
+        // After tapping, check if keyword input or seek button is immediately available
+        val postClickScreen = service.getScreenMap()
+        val input = findKeywordInput(postClickScreen)
+        if (input != null) {
+            log("Entering target keyword '$targetKeyword' into search input")
+            service.setText(input.node, targetKeyword)
+            delay(500L)
+
+            val seekScreen = service.getScreenMap()
+            val seekBtn = findSeekButton(seekScreen)
+            if (seekBtn != null) {
+                log("Tapping '${seekBtn.label}' button to execute search")
+                service.click(seekBtn.node)
+                switchedToNewToYou = false
+                delay(2000L)
+            }
+        }
+    }
+
+    private suspend fun handleSearchFormScreen(
+        service: JobstreetAccessibilityService,
+        screenMap: ScreenMap,
+        profile: UserProfile
+    ) {
+        val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "Software" } ?: "Software"
+        updateStatus(state = BotState.SCANNING_FEED, lastLog = "Entering search keyword '$targetKeyword'")
+        log("Search Form screen detected: setting keyword '$targetKeyword'")
+
+        // Check if keyword is already in the input
+        val input = findKeywordInput(screenMap)
+        val currentText = input?.text?.trim()?.lowercase() ?: ""
+        val keywordMatches = currentText.isNotEmpty() && currentText.contains(targetKeyword.lowercase())
+
+        val seekBtn = findSeekButton(screenMap)
+        if (seekBtn != null && keywordMatches) {
+            log("Keyword already matches ('$currentText'). Tapping '${seekBtn.label}' button")
+            service.click(seekBtn.node)
+            switchedToNewToYou = false
+            delay(2000L)
+            return
+        }
+
+        // Clear existing text if Clear All button is present and text doesn't match
+        val clearBtn = findClearAllButton(screenMap)
+        if (clearBtn != null && currentText.isNotEmpty() && !keywordMatches) {
+            log("Clearing existing search text via Clear All button")
+            service.click(clearBtn.node)
+            delay(400L)
+        }
+
+        val targetInput = input ?: service.getScreenMap().let { findKeywordInput(it) }
+        if (targetInput != null) {
+            log("Entering target keyword '$targetKeyword' into search form")
+            service.setText(targetInput.node, targetKeyword)
+            delay(500L)
+
+            val afterInputScreen = service.getScreenMap()
+            val freshSeekBtn = findSeekButton(afterInputScreen) ?: seekBtn
+            if (freshSeekBtn != null) {
+                log("Tapping '${freshSeekBtn.label}' button to execute search")
+                service.click(freshSeekBtn.node)
+                switchedToNewToYou = false
+                delay(2000L)
+                return
+            }
+        } else {
+            log("No keyword input element found on search form")
+        }
+    }
+
     private suspend fun handleJobFeedScreen(
         service: JobstreetAccessibilityService,
         screenMap: ScreenMap,
@@ -427,6 +556,25 @@ class BotEngine(private val context: Context) {
         }
 
         updateStatus(state = BotState.SCANNING_FEED, lastLog = "Scanning job feed")
+
+        // 1. Switch to 'New to you' tab if visible and not already on it
+        val newToYouTab = findNewToYouTab(screenMap)
+        if (newToYouTab != null && !switchedToNewToYou) {
+            val isAlreadySelected = newToYouTab.node?.isSelected == true ||
+                    newToYouTab.isChecked ||
+                    newToYouTab.contentDescription.contains("selected", ignoreCase = true)
+
+            if (isAlreadySelected) {
+                log("'New to you' tab is already selected")
+                switchedToNewToYou = true
+            } else {
+                log("Tapping 'New to you' tab to align with discovery flow...")
+                service.click(newToYouTab.node)
+                switchedToNewToYou = true
+                delay(1500L)
+                return
+            }
+        }
 
         // Find candidate job cards from the screen elements
         val jobCards = findJobCards(screenMap)
@@ -540,8 +688,8 @@ class BotEngine(private val context: Context) {
     }
 
     private fun isJobDetailsScreen(screenMap: ScreenMap): Boolean {
-        // Feed indicators that immediately disqualify a screen from being Job Details
-        if (isFeedScreen(screenMap)) {
+        // Feed, Home, and Search Form indicators immediately disqualify a screen from being Job Details
+        if (isFeedScreen(screenMap) || isHomeScreen(screenMap) || isSearchFormScreen(screenMap)) {
             return false
         }
 
@@ -572,19 +720,15 @@ class BotEngine(private val context: Context) {
                     (l.contains("search jobs") || l.contains("what:") || l.contains("where:") || l == "search")
         }
 
-        // 3. Presence of multiple job cards on screen
+        // 3. Presence of "New to you" or "All jobs" tab
+        val hasFeedTabs = findNewToYouTab(screenMap) != null ||
+                screenMap.elements.any { it.label.contains("all jobs", ignoreCase = true) }
+
+        // 4. Presence of multiple job cards on screen
         val cards = findJobCards(screenMap)
         if (cards.size >= 2) return true
 
-        return hasNavTabs || hasSearchBar
-    }
-
-    private fun isFeedNavigationTab(lower: String): Boolean {
-        return lower in setOf("search", "saved", "saved jobs", "applied", "applications", "my applications", "my activity", "profile") ||
-                lower.startsWith("search\n") ||
-                lower.startsWith("saved\n") ||
-                lower.startsWith("applied\n") ||
-                lower.startsWith("profile\n")
+        return hasNavTabs || hasSearchBar || hasFeedTabs
     }
 
     private fun isPureActionButton(lower: String): Boolean {
@@ -660,8 +804,8 @@ class BotEngine(private val context: Context) {
                 lower.startsWith("what:") ||
                 lower.startsWith("where:") ||
                 lower == "clear all" ||
-                lower == "all jobs" ||
-                lower == "new to you"
+                lower.contains("all jobs") ||
+                lower.contains("new to you")
     }
 
     private fun isJobMetadata(lower: String, rawLabel: String): Boolean {
@@ -755,5 +899,129 @@ class BotEngine(private val context: Context) {
         private const val TAG = "BotEngine"
         private const val UI_TRANSITION_DELAY_MS = 800L
         private const val MAX_CONSECUTIVE_STALLS = 6
+
+        /**
+         * Locates the search bar or search prompt on the Home Screen.
+         */
+        internal fun findSearchBarElement(screenMap: ScreenMap): UIElement? {
+            // Priority 1: Specific "continue your job search" element
+            val continueSearch = screenMap.elements.firstOrNull { elem ->
+                elem.label.contains("continue your job search", ignoreCase = true)
+            }
+            if (continueSearch != null) return continueSearch
+
+            // Priority 2: Element with "search jobs", "describe what you're looking for", or "what: job title"
+            val searchPrompt = screenMap.elements.firstOrNull { elem ->
+                val l = elem.label.lowercase().trim()
+                if (isFeedNavigationTab(l)) return@firstOrNull false
+                l == "search jobs" ||
+                l.startsWith("search jobs") ||
+                l.contains("describe what you're looking for") ||
+                l.contains("what: job title") ||
+                l.contains("job title, keyword") ||
+                (l.startsWith("search") && elem.centerY < 600 && (elem.isClickable || elem.isEditable))
+            }
+            if (searchPrompt != null) return searchPrompt
+
+            // Priority 3: Editable input in the upper portion of the screen (not bottom nav)
+            return screenMap.elements.firstOrNull { elem ->
+                (elem.isEditable || elem.className.contains("EditText", ignoreCase = true)) &&
+                elem.centerY < 700
+            }
+        }
+
+        /**
+         * Locates the keyword input field on the search form.
+         */
+        internal fun findKeywordInput(screenMap: ScreenMap): UIElement? {
+            // 1. Look for active EditText in search area (upper half of screen)
+            val edit = screenMap.elements.firstOrNull { elem ->
+                (elem.isEditable || elem.className.contains("EditText", ignoreCase = true)) &&
+                elem.centerY < 700
+            }
+            if (edit != null) return edit
+
+            // 2. Look for search box placeholder / label
+            return screenMap.elements.firstOrNull { elem ->
+                val lbl = elem.label.lowercase()
+                (lbl.contains("describe what you're looking for") ||
+                 lbl.contains("job title, keyword") ||
+                 lbl.contains("what: ")) &&
+                elem.centerY < 700
+            }
+        }
+
+        /**
+         * Locates the Seek / Search submission button.
+         */
+        internal fun findSeekButton(screenMap: ScreenMap): UIElement? {
+            return screenMap.elements.firstOrNull { elem ->
+                val l = elem.label.trim().lowercase()
+                (elem.isClickable || elem.className.contains("Button", ignoreCase = true)) &&
+                (l == "seek" || l.contains("seek") || l == "search" || l == "search jobs") &&
+                !isFeedNavigationTab(l)
+            }
+        }
+
+        /**
+         * Locates the Clear all button on the search form.
+         */
+        internal fun findClearAllButton(screenMap: ScreenMap): UIElement? {
+            return screenMap.elements.firstOrNull { elem ->
+                val l = elem.label.trim().lowercase()
+                l == "clear all" || l.contains("clear all")
+            }
+        }
+
+        /**
+         * Locates the 'New to you' tab in the search results / feed.
+         */
+        internal fun findNewToYouTab(screenMap: ScreenMap): UIElement? {
+            return screenMap.elements.firstOrNull { elem ->
+                val lbl = elem.label.trim().lowercase()
+                lbl.contains("new to you") && elem.centerY < 700
+            }
+        }
+
+        internal fun isFeedNavigationTab(lower: String): Boolean {
+            return lower in setOf("search", "saved", "saved jobs", "applied", "applications", "my applications", "my activity", "profile") ||
+                    lower.startsWith("search\n") ||
+                    lower.startsWith("saved\n") ||
+                    lower.startsWith("applied\n") ||
+                    lower.startsWith("profile\n")
+        }
+
+        /**
+         * Detects whether the current screen is the Jobstreet Search Form screen.
+         */
+        internal fun isSearchFormScreen(screenMap: ScreenMap): Boolean {
+            val lower = screenMap.rawText.lowercase()
+            if (lower.contains("application submitted") || lower.contains("you've applied")) return false
+            if (screenMap.findButton("submit application") != null) return false
+
+            val hasSearchFormMarkers = lower.contains("describe what you're looking for") ||
+                    lower.contains("clear all") ||
+                    (findSeekButton(screenMap) != null && (findKeywordInput(screenMap) != null || lower.contains("what:")))
+
+            return hasSearchFormMarkers
+        }
+
+        /**
+         * Detects whether the current screen is the Jobstreet Home Screen.
+         */
+        internal fun isHomeScreen(screenMap: ScreenMap): Boolean {
+            val lowerText = screenMap.rawText.lowercase()
+            if (lowerText.contains("application submitted") || lowerText.contains("you've applied")) return false
+            if (screenMap.findButton("submit application") != null) return false
+            if (isSearchFormScreen(screenMap)) return false
+
+            // Search Results / Feed indicators
+            if (screenMap.rawText.contains("search results", ignoreCase = true)) return false
+            if (findNewToYouTab(screenMap) != null) return false
+
+            return lowerText.contains("continue your job search") ||
+                    findSearchBarElement(screenMap) != null ||
+                    (lowerText.contains("recommended") && !lowerText.contains("all jobs"))
+        }
     }
 }
