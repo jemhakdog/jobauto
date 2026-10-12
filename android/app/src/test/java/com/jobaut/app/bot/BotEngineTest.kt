@@ -296,4 +296,37 @@ class BotEngineTest {
 
         assertFalse("Screen containing 'All jobs' tab must not be classified as Home screen", BotEngine.isHomeScreen(screenMap))
     }
+
+    @Test
+    fun testFindSeekButtonMatchesNonClickableTextViewWithSeek() {
+        // In React Native / Compose, the text element is a TextView with isClickable = false
+        val seekTextView = createElement(
+            text = "Seek",
+            className = "android.widget.TextView",
+            isClickable = false,
+            bounds = Rect(50, 500, 1000, 650),
+            centerY = 575
+        )
+        val screenMap = ScreenMap(listOf(seekTextView), "Seek")
+
+        val match = BotEngine.findSeekButton(screenMap)
+        assertNotNull("Should find 'Seek' even if node is a TextView inside clickable container", match)
+        assertEquals("Seek", match?.label)
+    }
+
+    @Test
+    fun testFindSeekButtonMatchesSeekWithJobCount() {
+        val seekWithCount = createElement(
+            text = "Seek (150 jobs)",
+            className = "android.widget.TextView",
+            isClickable = false,
+            bounds = Rect(50, 500, 1000, 650),
+            centerY = 575
+        )
+        val screenMap = ScreenMap(listOf(seekWithCount), "Seek (150 jobs)")
+
+        val match = BotEngine.findSeekButton(screenMap)
+        assertNotNull("Should match Seek button with job count", match)
+        assertEquals("Seek (150 jobs)", match?.label)
+    }
 }

@@ -79,6 +79,7 @@ class BotEngine(private val context: Context) {
 
     // Search and tab selection state
     internal var switchedToNewToYou = false
+    private var searchFormStallCount = 0
 
     /**
      * Starts the autonomous bot loop.
@@ -435,6 +436,7 @@ class BotEngine(private val context: Context) {
         val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "Software" } ?: "Software"
         updateStatus(state = BotState.SCANNING_FEED, lastLog = "Home screen detected, searching for '$targetKeyword'")
         log("Home Screen detected: initiating job search for keyword '$targetKeyword'")
+        searchFormStallCount = 0
 
         val searchBar = findSearchBarElement(screenMap)
         if (searchBar == null) {
@@ -511,6 +513,7 @@ class BotEngine(private val context: Context) {
             log("Keyword already matches ('$currentText'). Tapping '${seekBtn.label}' button")
             service.click(seekBtn.node)
             switchedToNewToYou = false
+            searchFormStallCount = 0
             delay(2000L)
             return
         }
@@ -525,9 +528,13 @@ class BotEngine(private val context: Context) {
 
         val targetInput = input ?: service.getScreenMap().let { findKeywordInput(it) }
         if (targetInput != null) {
-            log("Entering target keyword '$targetKeyword' into search form")
-            service.setText(targetInput.node, targetKeyword)
-            delay(500L)
+            if (!keywordMatches) {
+                log("Entering target keyword '$targetKeyword' into search form")
+                service.setText(targetInput.node, targetKeyword)
+                delay(600L)
+            } else {
+                log("Target keyword '$targetKeyword' already entered in search form")
+            }
 
             val afterInputScreen = service.getScreenMap()
             val freshSeekBtn = findSeekButton(afterInputScreen) ?: seekBtn
@@ -535,6 +542,60 @@ class BotEngine(private val context: Context) {
                 log("Tapping '${freshSeekBtn.label}' button to execute search")
                 service.click(freshSeekBtn.node)
                 switchedToNewToYou = false
+                searchFormStallCount = 0
+                delay(2000L)
+                return
+            }
+
+            searchFormStallCount++
+            log("Seek button not immediately found (attempt: $searchFormStallCount)")
+
+            // Recovery 1: Trigger IME Action (Search/Enter) on the keyword input
+            log("Attempting IME search action on keyword input")
+            targetInput.node?.performAction(0x00010000 /* ACTION_IME_ACTION */)
+            delay(1000L)
+
+            val postImeScreen = service.getScreenMap()
+            val postImeSeek = findSeekButton(postImeScreen)
+            if (postImeSeek != null) {
+                log("Seek button found after IME action; tapping '${postImeSeek.label}'")
+                service.click(postImeSeek.node)
+                switchedToNewToYou = false
+                searchFormStallCount = 0
+                delay(2000L)
+                return
+            }
+
+            // Recovery 2: Dismiss virtual keyboard via Back action if soft keyboard covers the submit button
+            if (searchFormStallCount >= 2) {
+                log("Dismissing soft keyboard via Back action")
+                service.goBack()
+                delay(800L)
+
+                val postBackScreen = service.getScreenMap()
+                val postBackSeek = findSeekButton(postBackScreen)
+                if (postBackSeek != null) {
+                    log("Seek button visible after keyboard dismissal; tapping '${postBackSeek.label}'")
+                    service.click(postBackSeek.node)
+                    switchedToNewToYou = false
+                    searchFormStallCount = 0
+                    delay(2000L)
+                    return
+                }
+            }
+
+            // Recovery 3: Scroll down to reveal Seek button if pushed below viewport
+            log("Scrolling down to locate Seek button...")
+            service.scrollDown()
+            delay(800L)
+
+            val scrolledScreen = service.getScreenMap()
+            val scrolledSeek = findSeekButton(scrolledScreen)
+            if (scrolledSeek != null) {
+                log("Seek button visible after scroll; tapping '${scrolledSeek.label}'")
+                service.click(scrolledSeek.node)
+                switchedToNewToYou = false
+                searchFormStallCount = 0
                 delay(2000L)
                 return
             }
@@ -548,6 +609,7 @@ class BotEngine(private val context: Context) {
         screenMap: ScreenMap,
         profile: UserProfile
     ) {
+        searchFormStallCount = 0
         if (currentJobHash.isNotEmpty()) {
             jobDetailsWaitCount++
             if (jobDetailsWaitCount >= 4) {
@@ -887,7 +949,7 @@ class BotEngine(private val context: Context) {
             // 1. Look for active EditText in search area (upper half of screen)
             val edit = screenMap.elements.firstOrNull { elem ->
                 (elem.isEditable || elem.className.contains("EditText", ignoreCase = true)) &&
-                elem.centerY < 700
+                elem.centerY < 1200
             }
             if (edit != null) return edit
 
@@ -897,7 +959,7 @@ class BotEngine(private val context: Context) {
                 (lbl.contains("describe what you're looking for") ||
                  lbl.contains("job title, keyword") ||
                  lbl.contains("what: ")) &&
-                elem.centerY < 700
+                elem.centerY < 1200
             }
         }
 
@@ -905,19 +967,34 @@ class BotEngine(private val context: Context) {
          * Locates the Seek / Search submission button.
          */
         internal fun findSeekButton(screenMap: ScreenMap): UIElement? {
+            // Priority 1: Any element containing "seek" (e.g. "Seek", "SEEK", "Seek jobs", "Seek (123 jobs)")
+            // Note: Does not require isClickable or Button className because in React Native / Compose
+            // the clickable attribute is often on the parent container, and service.click automatically
+            // climbs to clickable parents or gesture taps the center coordinates.
+            val seekElem = screenMap.elements.firstOrNull { elem ->
+                val l = elem.label.trim().lowercase()
+                val isSeekMatch = l == "seek" || l.startsWith("seek ") || l.endsWith(" seek") ||
+                        l.startsWith("seek(") || l.startsWith("seek (") || l.contains("seek jobs")
+                isSeekMatch && elem.label.lines().size <= 3 && elem.label.length <= 35
+            }
+            if (seekElem != null) return seekElem
+
+            // Priority 2: Action phrase buttons ("search jobs", "find jobs")
+            val actionPhraseElem = screenMap.elements.firstOrNull { elem ->
+                val l = elem.label.trim().lowercase()
+                (l == "search jobs" || l.startsWith("search jobs ") || l == "find jobs") &&
+                        elem.label.lines().size <= 2 && elem.label.length <= 30
+            }
+            if (actionPhraseElem != null) return actionPhraseElem
+
+            // Priority 3: Interactive button labeled "search" in the upper/middle viewport (excluding bottom nav tabs)
             return screenMap.elements.firstOrNull { elem ->
                 val l = elem.label.trim().lowercase()
-                // Never match elements in lower bottom navigation bar viewport (> 1800)
-                val inSearchArea = elem.centerY < 1800
-                val isShortLabel = elem.label.lines().size <= 2 && elem.label.length <= 30
-                val isSeekMatch = l == "seek" || l.startsWith("seek ") || l.endsWith(" seek") ||
-                        l == "search jobs" || (l == "search" && elem.centerY < 1200)
-
+                val isSearchLabel = l == "search"
+                val inSearchArea = elem.centerY < 1400
+                val notBottomNav = !(isFeedNavigationTab(l) && elem.centerY >= 1800)
                 (elem.isClickable || elem.className.contains("Button", ignoreCase = true)) &&
-                inSearchArea &&
-                isShortLabel &&
-                isSeekMatch &&
-                !(isFeedNavigationTab(l) && elem.centerY >= 1800)
+                        isSearchLabel && inSearchArea && notBottomNav
             }
         }
 
