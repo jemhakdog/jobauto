@@ -1,13 +1,13 @@
 package com.jobaut.app.bot
 
 import android.util.Log
-import com.jobaut.app.ai.LlamaBridge
+import com.jobaut.app.ai.LlmServerClient
 import com.jobaut.app.data.UserProfile
 import java.util.regex.Pattern
 
 /**
  * Evaluates candidate fit for job postings using blacklists, regex checks,
- * semantic cross-encoder reranking via [LlamaBridge], and keyword fallbacks.
+ * semantic cross-encoder reranking via [LlmServerClient], and keyword fallbacks.
  */
 object JobVerifier {
 
@@ -15,7 +15,7 @@ object JobVerifier {
 
     /**
      * Optional custom scoring provider for testing or custom scorers.
-     * When null, defaults to [LlamaBridge.scoreRelevance].
+     * When null, defaults to [LlmServerClient.scoreRelevance].
      */
     internal var rerankerScoreProvider: (suspend (Long, String, String) -> Float)? = null
 
@@ -48,14 +48,15 @@ object JobVerifier {
      *
      * 1. Fast pre-check: Disqualifying seniority, multi-year experience (>=3 yrs), mandatory relocation.
      * 2. User blacklisted keywords check against title & description.
-     * 3. AI semantic scoring: If [rerankerCtxPtr] != 0L, uses [LlamaBridge.scoreRelevance].
+     * 3. AI semantic scoring: If [serverUrl] is set or [rerankerScoreProvider] is active.
      * 4. Fallback: Keyword matching against target job titles.
      *
      * @param title Job title.
      * @param company Company name.
      * @param description Job description snippet or details text.
      * @param config Candidate profile and filter settings.
-     * @param rerankerCtxPtr Native reranker context pointer (0L if not initialized).
+     * @param rerankerCtxPtr Native reranker context pointer (for legacy/test compatibility).
+     * @param serverUrl URL of the remote AI server (e.g. http://127.0.0.1:8080).
      * @return true if the job is accepted, false if rejected.
      */
     suspend fun shouldApply(
@@ -63,7 +64,8 @@ object JobVerifier {
         company: String,
         description: String,
         config: UserProfile,
-        rerankerCtxPtr: Long = 0L
+        rerankerCtxPtr: Long = 0L,
+        serverUrl: String = ""
     ): Boolean {
         val cleanTitle = title.trim()
         val combinedText = "$cleanTitle $company $description".trim()
@@ -116,14 +118,20 @@ object JobVerifier {
             }
         }
 
-        // 3. AI Semantic match via Reranker model if context is active
-        if (rerankerCtxPtr != 0L) {
+        // 3. AI Semantic match via Reranker / LLM Server if configured or provider set
+        val effectiveServer = serverUrl.ifBlank { config.serverUrl }
+        val hasAiScorer = rerankerScoreProvider != null || (effectiveServer.isNotBlank() && rerankerCtxPtr != 0L) || (effectiveServer.isNotBlank() && effectiveServer.startsWith("http"))
+
+        if (hasAiScorer) {
             val candidateQuery = buildCandidateQuery(config)
             val docText = "Job Title: $cleanTitle. Company: $company. Details: ${description.take(500)}"
             try {
                 val scorer = rerankerScoreProvider
-                val score = scorer?.invoke(rerankerCtxPtr, candidateQuery, docText)
-                    ?: LlamaBridge.scoreRelevance(rerankerCtxPtr, candidateQuery, docText)
+                val score = if (scorer != null) {
+                    scorer.invoke(rerankerCtxPtr, candidateQuery, docText)
+                } else {
+                    LlmServerClient.scoreRelevance(candidateQuery, docText, effectiveServer, config.rerankerUrl)
+                }
                 Log.i(TAG, "Reranker score: $score for '$cleanTitle'")
                 // Relevance threshold 0.40 (matches design spec & python bot prob)
                 if (score >= 0.40f) {

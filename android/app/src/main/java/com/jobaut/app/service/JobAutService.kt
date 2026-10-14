@@ -66,10 +66,11 @@ class JobAutService : Service() {
                 isRunning = true
                 _isRunningFlow.value = true
 
+                val explicitServerUrl = intent?.getStringExtra(EXTRA_SERVER_URL) ?: ""
                 val explicitQwen = intent?.getStringExtra(EXTRA_QWEN_PATH) ?: ""
                 val explicitReranker = intent?.getStringExtra(EXTRA_RERANKER_PATH) ?: ""
 
-                handleStartAsync(explicitQwen, explicitReranker)
+                handleStartAsync(explicitServerUrl, explicitQwen, explicitReranker)
                 return START_STICKY
             }
             else -> {
@@ -79,7 +80,7 @@ class JobAutService : Service() {
         }
     }
 
-    private fun handleStartAsync(explicitQwen: String, explicitReranker: String) {
+    private fun handleStartAsync(explicitServerUrl: String, explicitQwen: String, explicitReranker: String) {
         val engine = botEngine ?: run {
             val created = BotEngine(applicationContext)
             botEngine = created
@@ -97,20 +98,7 @@ class JobAutService : Service() {
 
         // Offload engine initialization to background IO thread
         serviceScope.launch(Dispatchers.IO) {
-            val qwenPath = if (explicitQwen.isNotEmpty() && File(explicitQwen).exists()) {
-                explicitQwen
-            } else {
-                resolveDefaultModelPath(DEFAULT_QWEN_MODEL)
-            }
-
-            val rerankerPath = if (explicitReranker.isNotEmpty() && File(explicitReranker).exists()) {
-                explicitReranker
-            } else {
-                resolveDefaultModelPath(DEFAULT_RERANKER_MODEL)
-            }
-
-            // Launch the engine with resolved paths (uses fast rule-based fallback if models not imported)
-            engine.start(qwenModelPath = qwenPath, rerankerModelPath = rerankerPath)
+            engine.start(serverUrl = explicitServerUrl)
         }
     }
 
@@ -250,14 +238,12 @@ class JobAutService : Service() {
         const val ACTION_START = "com.jobaut.app.action.START"
         const val ACTION_STOP = "com.jobaut.app.action.STOP"
 
+        const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_QWEN_PATH = "extra_qwen_path"
         const val EXTRA_RERANKER_PATH = "extra_reranker_path"
 
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "jobaut_service_channel"
-
-        private const val DEFAULT_QWEN_MODEL = "qwen2.5-0.5b-instruct.gguf"
-        private const val DEFAULT_RERANKER_MODEL = "bge-reranker-base.gguf"
 
         @Volatile
         var isRunning: Boolean = false
@@ -275,11 +261,13 @@ class JobAutService : Service() {
         @JvmStatic
         fun startService(
             context: Context,
+            serverUrl: String = "",
             qwenPath: String = "",
             rerankerPath: String = ""
         ) {
             val intent = Intent(context, JobAutService::class.java).apply {
                 action = ACTION_START
+                if (serverUrl.isNotBlank()) putExtra(EXTRA_SERVER_URL, serverUrl)
                 if (qwenPath.isNotBlank()) putExtra(EXTRA_QWEN_PATH, qwenPath)
                 if (rerankerPath.isNotBlank()) putExtra(EXTRA_RERANKER_PATH, rerankerPath)
             }

@@ -1,7 +1,7 @@
 package com.jobaut.app.bot
 
 import android.util.Log
-import com.jobaut.app.ai.LlamaBridge
+import com.jobaut.app.ai.LlmServerClient
 import com.jobaut.app.data.AppDatabase
 import com.jobaut.app.data.LearnedQuestionEntity
 import com.jobaut.app.data.UserProfile
@@ -9,7 +9,7 @@ import java.security.MessageDigest
 
 /**
  * Handles answering job screening questions using learned memory (Room DB),
- * rule-based candidate profile matching, and on-device Qwen LLM reasoning.
+ * rule-based candidate profile matching, and remote Qwen LLM reasoning.
  */
 object QuestionReasoner {
 
@@ -19,7 +19,7 @@ object QuestionReasoner {
      * Answers a screening question using a multi-tier resolution strategy:
      * 1. Check Room database for previously learned / memorized answers (`LearnedQuestionDao.findAnswer`).
      * 2. Rule-based lookup based on candidate facts in [UserProfile].
-     * 3. On-device LLM inference via [LlamaBridge.generate] if [llmCtxPtr] != 0L.
+     * 3. Remote LLM inference via [LlmServerClient.generate] if server is available.
      * 4. Safe fallback ("No" or "None").
      *
      * Persists newly answered questions to Room DB for future fast retrieval.
@@ -27,8 +27,9 @@ object QuestionReasoner {
     suspend fun answerQuestion(
         questionText: String,
         profile: UserProfile,
-        llmCtxPtr: Long,
-        db: AppDatabase
+        llmCtxPtr: Long = 0L,
+        db: AppDatabase,
+        serverUrl: String = ""
     ): String {
         val cleanQuestion = questionText.trim()
         if (cleanQuestion.isEmpty()) return "No"
@@ -54,12 +55,15 @@ object QuestionReasoner {
             return ruleAnswer
         }
 
-        // Tier 3: Query on-device LLM
+        // Tier 3: Query remote LLM server
         var answer = ""
-        if (llmCtxPtr != 0L) {
+        val effectiveServer = serverUrl.ifBlank { profile.serverUrl }
+        val shouldQueryLlm = llmCtxPtr != 0L || effectiveServer.isNotBlank()
+
+        if (shouldQueryLlm) {
             val prompt = buildPrompt(cleanQuestion, profile)
             try {
-                val rawResponse = LlamaBridge.generate(llmCtxPtr, prompt, maxTokens = 64)
+                val rawResponse = LlmServerClient.generate(prompt, maxTokens = 64, serverUrl = effectiveServer)
                 answer = parseLlmResponse(rawResponse)
                 Log.d(TAG, "Answer generated via LLM: '$answer'")
             } catch (e: Exception) {
@@ -74,7 +78,7 @@ object QuestionReasoner {
         }
 
         // Save newly answered question to Room DB
-        saveLearnedAnswer(db, hash, cleanQuestion, answer, if (llmCtxPtr != 0L) 0.8f else 0.5f)
+        saveLearnedAnswer(db, hash, cleanQuestion, answer, if (answer != "No") 0.8f else 0.5f)
 
         return answer
     }

@@ -63,7 +63,9 @@ data class UserProfile(
         "copywriter",
         "unpaid",
         "commission only"
-    )
+    ),
+    val serverUrl: String = "http://127.0.0.1:8080",
+    val rerankerUrl: String = "http://127.0.0.1:8081"
 )
 
 /**
@@ -82,6 +84,8 @@ class UserConfigManager(private val context: Context) {
         val KEY_MIN_SALARY = intPreferencesKey("min_salary")
         val KEY_TARGET_TITLES = stringPreferencesKey("target_titles")
         val KEY_BLACKLISTED_KEYWORDS = stringPreferencesKey("blacklisted_keywords")
+        val KEY_SERVER_URL = stringPreferencesKey("server_url")
+        val KEY_RERANKER_URL = stringPreferencesKey("reranker_url")
         val KEY_QWEN_MODEL_PATH = stringPreferencesKey("qwen_model_path")
         val KEY_RERANKER_MODEL_PATH = stringPreferencesKey("reranker_model_path")
     }
@@ -124,7 +128,31 @@ class UserConfigManager(private val context: Context) {
             preferences[PreferencesKeys.KEY_MIN_SALARY] = profile.minSalary
             preferences[PreferencesKeys.KEY_TARGET_TITLES] = profile.targetTitles.joinToString("\n")
             preferences[PreferencesKeys.KEY_BLACKLISTED_KEYWORDS] = profile.blacklistedKeywords.joinToString("\n")
+            preferences[PreferencesKeys.KEY_SERVER_URL] = profile.serverUrl
+            preferences[PreferencesKeys.KEY_RERANKER_URL] = profile.rerankerUrl
         }
+    }
+
+    suspend fun saveServerUrl(url: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.KEY_SERVER_URL] = url
+        }
+    }
+
+    suspend fun getServerUrl(): String {
+        val prefs = context.dataStore.data.first()
+        return prefs[PreferencesKeys.KEY_SERVER_URL] ?: defaultProfile.serverUrl
+    }
+
+    suspend fun saveRerankerUrl(url: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.KEY_RERANKER_URL] = url
+        }
+    }
+
+    suspend fun getRerankerUrl(): String {
+        val prefs = context.dataStore.data.first()
+        return prefs[PreferencesKeys.KEY_RERANKER_URL] ?: defaultProfile.rerankerUrl
     }
 
     suspend fun saveQwenModelPath(path: String) {
@@ -166,6 +194,9 @@ class UserConfigManager(private val context: Context) {
             raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
         } ?: defaultProfile.blacklistedKeywords
 
+        val serverUrl = preferences[PreferencesKeys.KEY_SERVER_URL] ?: defaultProfile.serverUrl
+        val rerankerUrl = preferences[PreferencesKeys.KEY_RERANKER_URL] ?: defaultProfile.rerankerUrl
+
         return UserProfile(
             name = name,
             email = email,
@@ -175,7 +206,9 @@ class UserConfigManager(private val context: Context) {
             expectedSalary = expectedSalary,
             minSalary = minSalary,
             targetTitles = targetTitles,
-            blacklistedKeywords = blacklistedKeywords
+            blacklistedKeywords = blacklistedKeywords,
+            serverUrl = serverUrl,
+            rerankerUrl = rerankerUrl
         )
     }
 

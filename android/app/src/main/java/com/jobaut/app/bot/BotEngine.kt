@@ -2,7 +2,7 @@ package com.jobaut.app.bot
 
 import android.content.Context
 import android.util.Log
-import com.jobaut.app.ai.LlamaBridge
+import com.jobaut.app.ai.LlmServerClient
 import com.jobaut.app.automation.JobstreetAccessibilityService
 import com.jobaut.app.automation.ScreenMap
 import com.jobaut.app.automation.UIElement
@@ -66,9 +66,8 @@ class BotEngine(private val context: Context) {
     private val _statusFlow = MutableStateFlow(BotStatus())
     val statusFlow: StateFlow<BotStatus> = _statusFlow.asStateFlow()
 
-    // Model contexts
-    private var qwenCtxPtr: Long = 0L
-    private var rerankerCtxPtr: Long = 0L
+    // Configured remote server URL
+    private var configuredServerUrl: String = ""
 
     // In-memory applied/seen jobs cache for fast loop deduplication
     private val processedJobs = HashSet<String>()
@@ -85,7 +84,11 @@ class BotEngine(private val context: Context) {
      * Starts the autonomous bot loop.
      * Runs strictly on [Dispatchers.Default].
      */
-    fun start(qwenModelPath: String = "", rerankerModelPath: String = "") {
+    fun start(
+        serverUrl: String = "",
+        qwenModelPath: String = "",
+        rerankerModelPath: String = ""
+    ) {
         if (loopJob?.isActive == true) {
             log("Bot is already running")
             return
@@ -99,10 +102,22 @@ class BotEngine(private val context: Context) {
                 formSubmitAttempts = 0
                 jobDetailsWaitCount = 0
 
-                updateStatus(state = BotState.SCANNING_FEED, isRunning = true, lastLog = "Bot engine starting...")
+                val profile = configManager.loadProfile()
+                configuredServerUrl = serverUrl.ifBlank { profile.serverUrl }
 
-                // Initialize native models if paths provided
-                initModels(qwenModelPath, rerankerModelPath)
+                updateStatus(
+                    state = BotState.SCANNING_FEED,
+                    isRunning = true,
+                    lastLog = "Bot engine starting with server: $configuredServerUrl..."
+                )
+
+                // Probe and warmup models on server
+                val conn = LlmServerClient.checkConnection(configuredServerUrl, profile.rerankerUrl)
+                if (conn.isConnected) {
+                    log("Connected to LLM Server: LLM=${conn.llmModel}, Reranker=${conn.rerankerModel}")
+                } else {
+                    log("LLM Server unreachable (${conn.message}), using rule-based reasoning fallback")
+                }
 
                 // Refresh applied today count from Room DB
                 val todayCount = getTodayAppliedCount()
@@ -125,7 +140,7 @@ class BotEngine(private val context: Context) {
     }
 
     /**
-     * Stops the autonomous bot loop and cleans up native model allocations.
+     * Stops the autonomous bot loop.
      */
     fun stop() {
         log("Stopping bot engine...")
@@ -134,40 +149,8 @@ class BotEngine(private val context: Context) {
         switchedToNewToYou = false
     }
 
-    private suspend fun initModels(qwenPath: String, rerankerPath: String) {
-        if (qwenPath.isNotBlank() && qwenCtxPtr == 0L) {
-            log("Initializing Qwen model from $qwenPath")
-            try {
-                qwenCtxPtr = LlamaBridge.initModel(qwenPath, nThreads = 4, ctxSize = 1024, isReranker = false)
-                log("Qwen model initialized (ptr: $qwenCtxPtr)")
-            } catch (e: Exception) {
-                log("Failed initializing Qwen model: ${e.message}")
-            }
-        }
-
-        if (rerankerPath.isNotBlank() && rerankerCtxPtr == 0L) {
-            log("Initializing Reranker model from $rerankerPath")
-            try {
-                rerankerCtxPtr = LlamaBridge.initModel(rerankerPath, nThreads = 2, ctxSize = 512, isReranker = true)
-                log("Reranker model initialized (ptr: $rerankerCtxPtr)")
-            } catch (e: Exception) {
-                log("Failed initializing Reranker model: ${e.message}")
-            }
-        }
-    }
-
     private suspend fun cleanup() {
         switchedToNewToYou = false
-        if (qwenCtxPtr != 0L) {
-            val ptr = qwenCtxPtr
-            qwenCtxPtr = 0L
-            LlamaBridge.freeModel(ptr)
-        }
-        if (rerankerCtxPtr != 0L) {
-            val ptr = rerankerCtxPtr
-            rerankerCtxPtr = 0L
-            LlamaBridge.freeModel(ptr)
-        }
     }
 
     /**
@@ -208,7 +191,7 @@ class BotEngine(private val context: Context) {
             // 3. If in another app / external webview
             if (!isJobstreet(pkg)) {
                 val currentState = _statusFlow.value.state
-                // Only navigate back if we were actively applying and Jobstreet redirected out to external site (Spec §4.2)
+                // Only navigate back if we were actively applying and Jobstreet redirected out to external site
                 if (currentJobHash.isNotEmpty() && (currentState == BotState.JOB_DETAILS || currentState == BotState.FILLING_FORM)) {
                     log("External application redirect detected ($pkg) - navigating back")
                     service.goBack()
@@ -227,7 +210,9 @@ class BotEngine(private val context: Context) {
 
             val userProfile = configManager.loadProfile()
 
-            // 1. Detect screen type & handle corresponding state
+            // Detect screen type & handle corresponding state.
+            // IMPORTANT: Only isSearchResultsScreen browses and scrolls candidate jobs.
+            // Any other landing screen triggers the search workflow instead of scrolling Home.
             when {
                 // Confirmation screen (application submitted)
                 isConfirmationScreen(screenMap) -> {
@@ -249,14 +234,14 @@ class BotEngine(private val context: Context) {
                     handleSearchFormScreen(service, screenMap, userProfile)
                 }
 
-                // Home screen (search bar prompt e.g. "continue your job search")
-                isHomeScreen(screenMap) -> {
-                    handleHomeScreen(service, screenMap, userProfile)
+                // Search Results / Job Feed screen (ONLY genuine search results feed)
+                isSearchResultsScreen(screenMap) -> {
+                    handleJobFeedScreen(service, screenMap, userProfile)
                 }
 
-                // Job Feed screen (job list / search results)
+                // Home screen or any non-results screen: Click Search and type keyword
                 else -> {
-                    handleJobFeedScreen(service, screenMap, userProfile)
+                    handleHomeScreen(service, screenMap, userProfile)
                 }
             }
 
@@ -299,7 +284,8 @@ class BotEngine(private val context: Context) {
             ?: screenMap.findButton("maybe later")
             ?: screenMap.findButton("close")
 
-        if (doneBtn != null) {
+        if (doneBtn != null && doneBtn.node != null) {
+            log("Verified confirmation button: '${doneBtn.label}'. Dismissing...")
             service.click(doneBtn.node)
         } else {
             service.goBack()
@@ -323,10 +309,15 @@ class BotEngine(private val context: Context) {
         val inputs = screenMap.findInputs()
         var filledAny = false
         for (input in inputs) {
-            if (input.text.isBlank()) {
+            if (input.text.isBlank() && input.node != null) {
                 val questionLabel = extractInputLabel(screenMap, input)
-                val answer = QuestionReasoner.answerQuestion(questionLabel, profile, qwenCtxPtr, db)
-                log("Filling input field '$questionLabel' -> '$answer'")
+                val answer = QuestionReasoner.answerQuestion(
+                    questionText = questionLabel,
+                    profile = profile,
+                    db = db,
+                    serverUrl = configuredServerUrl
+                )
+                log("Verified input field '$questionLabel' -> typing answer '$answer'")
                 val success = service.setText(input.node, answer)
                 if (success) {
                     filledAny = true
@@ -343,14 +334,19 @@ class BotEngine(private val context: Context) {
         if (checkableOptions.isNotEmpty()) {
             val optionLabels = checkableOptions.map { it.label }
             val questionLabel = extractScreenQuestion(screenMap)
-            val suggested = QuestionReasoner.answerQuestion(questionLabel, profile, qwenCtxPtr, db)
+            val suggested = QuestionReasoner.answerQuestion(
+                questionText = questionLabel,
+                profile = profile,
+                db = db,
+                serverUrl = configuredServerUrl
+            )
             val best = QuestionReasoner.selectBestOption(questionLabel, optionLabels, suggested)
 
             val matchedElem = checkableOptions.firstOrNull { it.label == best }
                 ?: checkableOptions.firstOrNull()
 
-            if (matchedElem != null) {
-                log("Selecting option: '${matchedElem.label}' for '$questionLabel'")
+            if (matchedElem != null && matchedElem.node != null) {
+                log("Verified selection option: '${matchedElem.label}' for '$questionLabel'")
                 service.click(matchedElem.node)
                 delay(300L)
             }
@@ -360,16 +356,16 @@ class BotEngine(private val context: Context) {
         val submitBtn = screenMap.findButton("submit application")
             ?: screenMap.findButton("submit")
 
-        if (submitBtn != null) {
+        if (submitBtn != null && submitBtn.node != null) {
             formSubmitAttempts++
             if (formSubmitAttempts >= 3) {
-                log("Form submission failed 3 times (validation error/CAPTCHA). Backing out...")
+                log("Form submission repeated 3 times (validation error/CAPTCHA). Backing out...")
                 formSubmitAttempts = 0
                 service.goBack()
                 delay(1000L)
                 return
             }
-            log("Tapping Submit Application (attempt $formSubmitAttempts)")
+            log("Verified Submit button. Tapping Submit Application (attempt $formSubmitAttempts)")
             service.click(submitBtn.node)
             delay(2000L)
             return
@@ -379,15 +375,15 @@ class BotEngine(private val context: Context) {
             ?: screenMap.findButton("next")
             ?: screenMap.findButton("review")
 
-        if (advanceBtn != null) {
-            log("Tapping advance button: ${advanceBtn.label}")
+        if (advanceBtn != null && advanceBtn.node != null) {
+            log("Verified advance button: ${advanceBtn.label}. Tapping...")
             service.click(advanceBtn.node)
             delay(1500L)
             return
         }
 
         // If no progress button visible, scroll down to reveal more fields or buttons
-        log("No action button found on form, scrolling down")
+        log("No action button found on form, scrolling down to reveal buttons")
         service.scrollDown()
     }
 
@@ -401,7 +397,7 @@ class BotEngine(private val context: Context) {
 
         val applyBtn = findApplyButton(screenMap)
 
-        if (applyBtn != null) {
+        if (applyBtn != null && applyBtn.node != null) {
             // Verify if job should be applied
             val title = _statusFlow.value.currentJobTitle.ifBlank { extractJobTitle(screenMap) }
             val shouldApply = JobVerifier.shouldApply(
@@ -409,20 +405,20 @@ class BotEngine(private val context: Context) {
                 company = "",
                 description = screenMap.rawText.take(500),
                 config = profile,
-                rerankerCtxPtr = rerankerCtxPtr
+                serverUrl = configuredServerUrl
             )
 
             if (shouldApply) {
-                log("Tapping Apply button for '$title'")
+                log("Verified candidate fit for '$title'. Tapping '${applyBtn.label}' button...")
                 updateStatus(currentJobTitle = title, state = BotState.FILLING_FORM)
                 service.click(applyBtn.node)
             } else {
-                log("Job did not pass verification, navigating back")
+                log("Job did not pass qualification check, navigating back")
                 navigateBackToFeed(service, screenMap)
                 updateStatus(state = BotState.SCANNING_FEED)
             }
         } else {
-            log("No apply button found in details, navigating back")
+            log("No apply button verified in job details, navigating back")
             navigateBackToFeed(service, screenMap)
             updateStatus(state = BotState.SCANNING_FEED)
         }
@@ -433,22 +429,44 @@ class BotEngine(private val context: Context) {
         screenMap: ScreenMap,
         profile: UserProfile
     ) {
-        val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "Software" } ?: "Software"
-        updateStatus(state = BotState.SCANNING_FEED, lastLog = "Home screen detected, opening search")
-        log("Home Screen detected: opening search bar for keyword '$targetKeyword'")
+        val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "junior python" } ?: "junior python"
+        updateStatus(state = BotState.SCANNING_FEED, lastLog = "Home screen detected, initiating search for '$targetKeyword'")
+        log("Home Screen detected: verifying search trigger for '$targetKeyword'")
         searchFormStallCount = 0
 
+        // Verification 1: Look for top search bar / prompt
         val searchBar = findSearchBarElement(screenMap)
-        if (searchBar == null) {
-            log("No search bar element found on Home screen, scrolling to reveal it")
-            service.scrollDown()
+        if (searchBar != null && searchBar.node != null) {
+            log("Verified top search bar ('${searchBar.label}'). Tapping to open search...")
+            service.click(searchBar.node)
+            delay(1500L)
             return
         }
 
-        // Tap search bar to open full Search Form screen, matching Python flow 1:1
-        log("Tapping search bar on Home screen: '${searchBar.label}'")
-        service.click(searchBar.node)
-        delay(1500L)
+        // Verification 2: Look for bottom navigation "Search" tab
+        val bottomSearchTab = findBottomNavSearchTab(screenMap)
+        if (bottomSearchTab != null && bottomSearchTab.node != null) {
+            log("Verified bottom navigation Search tab ('${bottomSearchTab.label}'). Tapping to open search...")
+            service.click(bottomSearchTab.node)
+            delay(1500L)
+            return
+        }
+
+        // Verification 3: Generic search prompt in upper screen
+        val genericSearch = screenMap.elements.firstOrNull { elem ->
+            val l = elem.label.lowercase().trim()
+            (l.contains("search") || l.contains("find jobs")) && elem.centerY < 800
+        }
+        if (genericSearch != null && genericSearch.node != null) {
+            log("Verified generic search prompt ('${genericSearch.label}'). Tapping...")
+            service.click(genericSearch.node)
+            delay(1500L)
+            return
+        }
+
+        // Guard: NEVER scroll or evaluate jobs on Home! Wait for UI to stabilize.
+        log("Waiting for search bar element on screen without scrolling...")
+        delay(1200L)
     }
 
     private suspend fun handleSearchFormScreen(
@@ -456,18 +474,25 @@ class BotEngine(private val context: Context) {
         screenMap: ScreenMap,
         profile: UserProfile
     ) {
-        val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "Software" } ?: "Software"
+        val targetKeyword = profile.targetTitles.firstOrNull()?.trim()?.ifEmpty { "junior python" } ?: "junior python"
         updateStatus(state = BotState.SCANNING_FEED, lastLog = "Entering search keyword '$targetKeyword'")
-        log("Search Form screen detected: setting keyword '$targetKeyword'")
+        log("Search Form screen detected: verifying keyword input for '$targetKeyword'")
 
-        // Check if keyword is already in the input
+        // 1. Verify keyword input element exists
         val input = findKeywordInput(screenMap)
-        val currentText = input?.text?.trim()?.lowercase() ?: ""
+        if (input == null || input.node == null) {
+            log("Keyword input element not found yet on search form, waiting...")
+            delay(800L)
+            return
+        }
+
+        val currentText = input.text.trim().lowercase()
         val keywordMatches = currentText.isNotEmpty() && currentText.contains(targetKeyword.lowercase())
 
+        // 2. Check if keyword is already present and Seek button is ready
         val seekBtn = findSeekButton(screenMap)
-        if (seekBtn != null && keywordMatches) {
-            log("Keyword already matches ('$currentText'). Tapping '${seekBtn.label}' button")
+        if (seekBtn != null && seekBtn.node != null && keywordMatches) {
+            log("Verified keyword already matches ('$currentText'). Tapping '${seekBtn.label}' button...")
             service.click(seekBtn.node)
             switchedToNewToYou = false
             searchFormStallCount = 0
@@ -475,94 +500,72 @@ class BotEngine(private val context: Context) {
             return
         }
 
-        // Clear existing text if Clear All button is present and text doesn't match
+        // 3. Clear existing text if Clear All button is present and text doesn't match
         val clearBtn = findClearAllButton(screenMap)
-        if (clearBtn != null && currentText.isNotEmpty() && !keywordMatches) {
-            log("Clearing existing search text via Clear All button")
+        if (clearBtn != null && clearBtn.node != null && currentText.isNotEmpty() && !keywordMatches) {
+            log("Verified Clear all button. Clearing existing search text...")
             service.click(clearBtn.node)
             delay(400L)
         }
 
-        val targetInput = input ?: service.getScreenMap().let { findKeywordInput(it) }
-        if (targetInput != null) {
-            if (!keywordMatches) {
-                // Focus the input by tapping first, matching Python
-                log("Focusing keyword input in search form")
-                service.click(targetInput.node)
-                delay(300L)
+        // 4. Focus & enter keyword
+        if (!keywordMatches) {
+            log("Focusing keyword input in search form")
+            service.click(input.node)
+            delay(300L)
 
-                log("Entering target keyword '$targetKeyword' into search form")
-                service.setText(targetInput.node, targetKeyword)
-                delay(600L)
-            } else {
-                log("Target keyword '$targetKeyword' already entered in search form")
-            }
+            log("Setting target keyword '$targetKeyword' into search form")
+            service.setText(input.node, targetKeyword)
+            delay(600L)
+        }
 
-            val afterInputScreen = service.getScreenMap()
-            val freshSeekBtn = findSeekButton(afterInputScreen) ?: seekBtn
-            if (freshSeekBtn != null) {
-                log("Tapping '${freshSeekBtn.label}' button to execute search")
-                service.click(freshSeekBtn.node)
-                switchedToNewToYou = false
-                searchFormStallCount = 0
-                delay(2000L)
-                return
-            }
+        // 5. Verify the keyword was actually entered
+        val afterInputScreen = service.getScreenMap()
+        val freshSeekBtn = findSeekButton(afterInputScreen) ?: seekBtn
+        if (freshSeekBtn != null && freshSeekBtn.node != null) {
+            log("Verified Seek button ('${freshSeekBtn.label}'). Tapping to execute search...")
+            service.click(freshSeekBtn.node)
+            switchedToNewToYou = false
+            searchFormStallCount = 0
+            delay(2000L)
+            return
+        }
 
-            searchFormStallCount++
-            log("Seek button not immediately found (attempt: $searchFormStallCount)")
+        searchFormStallCount++
+        log("Seek button not immediately found (attempt: $searchFormStallCount)")
 
-            // Recovery 1: Trigger IME Action (Search/Enter) on the keyword input
-            log("Attempting IME search action on keyword input")
-            targetInput.node?.performAction(0x00010000 /* ACTION_IME_ACTION */)
-            delay(1000L)
+        // Action: Trigger IME Search / Enter action on the keyword input
+        log("Attempting IME search action on keyword input")
+        input.node.performAction(0x00010000 /* ACTION_IME_ACTION */)
+        delay(1200L)
 
-            val postImeScreen = service.getScreenMap()
-            val postImeSeek = findSeekButton(postImeScreen)
-            if (postImeSeek != null) {
-                log("Seek button found after IME action; tapping '${postImeSeek.label}'")
-                service.click(postImeSeek.node)
-                switchedToNewToYou = false
-                searchFormStallCount = 0
-                delay(2000L)
-                return
-            }
+        val postImeScreen = service.getScreenMap()
+        val postImeSeek = findSeekButton(postImeScreen)
+        if (postImeSeek != null && postImeSeek.node != null) {
+            log("Seek button verified after IME action; tapping '${postImeSeek.label}'")
+            service.click(postImeSeek.node)
+            switchedToNewToYou = false
+            searchFormStallCount = 0
+            delay(2000L)
+            return
+        }
 
-            // Recovery 2: Dismiss virtual keyboard via Back action if soft keyboard covers the submit button
-            if (searchFormStallCount >= 2) {
-                log("Dismissing soft keyboard via Back action")
-                service.goBack()
-                delay(800L)
-
-                val postBackScreen = service.getScreenMap()
-                val postBackSeek = findSeekButton(postBackScreen)
-                if (postBackSeek != null) {
-                    log("Seek button visible after keyboard dismissal; tapping '${postBackSeek.label}'")
-                    service.click(postBackSeek.node)
-                    switchedToNewToYou = false
-                    searchFormStallCount = 0
-                    delay(2000L)
-                    return
-                }
-            }
-
-            // Recovery 3: Scroll down to reveal Seek button if pushed below viewport
-            log("Scrolling down to locate Seek button...")
-            service.scrollDown()
+        // Dismiss soft keyboard if covering the Seek button
+        if (searchFormStallCount >= 2) {
+            log("Dismissing keyboard to reveal Seek button")
+            service.goBack()
             delay(800L)
 
-            val scrolledScreen = service.getScreenMap()
-            val scrolledSeek = findSeekButton(scrolledScreen)
-            if (scrolledSeek != null) {
-                log("Seek button visible after scroll; tapping '${scrolledSeek.label}'")
-                service.click(scrolledSeek.node)
+            val postBackScreen = service.getScreenMap()
+            val postBackSeek = findSeekButton(postBackScreen)
+            if (postBackSeek != null && postBackSeek.node != null) {
+                log("Seek button visible after keyboard dismissal; tapping '${postBackSeek.label}'")
+                service.click(postBackSeek.node)
                 switchedToNewToYou = false
                 searchFormStallCount = 0
                 delay(2000L)
                 return
             }
-        } else {
-            log("No keyword input element found on search form")
         }
     }
 
@@ -591,8 +594,8 @@ class BotEngine(private val context: Context) {
 
         // 1. Switch to 'New to you' tab if visible and not already on it
         val newToYouTab = findNewToYouTab(screenMap)
-        if (newToYouTab != null && !switchedToNewToYou) {
-            val isAlreadySelected = newToYouTab.node?.isSelected == true ||
+        if (newToYouTab != null && newToYouTab.node != null && !switchedToNewToYou) {
+            val isAlreadySelected = newToYouTab.node.isSelected ||
                     newToYouTab.isChecked ||
                     newToYouTab.contentDescription.contains("selected", ignoreCase = true)
 
@@ -600,7 +603,7 @@ class BotEngine(private val context: Context) {
                 log("'New to you' tab is already selected")
                 switchedToNewToYou = true
             } else {
-                log("Tapping 'New to you' tab to align with discovery flow...")
+                log("Verified 'New to you' tab: tapping to view freshest listings...")
                 service.click(newToYouTab.node)
                 switchedToNewToYou = true
                 delay(1500L)
@@ -608,7 +611,16 @@ class BotEngine(private val context: Context) {
             }
         }
 
-        // Find candidate job cards from the screen elements
+        // 2. Check for "Strong match" / "Strong applicant" filter if present
+        val strongFilter = findStrongMatchFilter(screenMap)
+        if (strongFilter != null && strongFilter.node != null && !strongFilter.isChecked && !strongFilter.node.isSelected) {
+            log("Found '${strongFilter.label}' filter chip: tapping to filter strongest matches...")
+            service.click(strongFilter.node)
+            delay(1500L)
+            return
+        }
+
+        // 3. Find candidate job cards from the search results
         val jobCards = findJobCards(screenMap)
         var appliedOrClicked = false
 
@@ -617,6 +629,8 @@ class BotEngine(private val context: Context) {
         }
 
         for (card in jobCards) {
+            if (card.node == null) continue
+
             val title = card.label.lines().firstOrNull { it.isNotBlank() } ?: card.label
             val jobHash = card.label.trim()
 
@@ -639,13 +653,13 @@ class BotEngine(private val context: Context) {
                 company = "",
                 description = card.label,
                 config = profile,
-                rerankerCtxPtr = rerankerCtxPtr
+                serverUrl = configuredServerUrl
             )
 
             processedJobs.add(jobHash)
 
             if (shouldApply) {
-                log("Job matches: '$title'. Opening details...")
+                log("Job verified match: '$title'. Opening details...")
                 currentJobHash = jobHash
                 updateStatus(currentJobTitle = title, state = BotState.JOB_DETAILS)
                 service.click(card.node)
@@ -653,13 +667,13 @@ class BotEngine(private val context: Context) {
                 consecutiveStallCount = 0
                 break
             } else {
-                log("Job rejected: '$title'")
+                log("Job rejected by verification: '$title'")
             }
         }
 
         if (!appliedOrClicked) {
             consecutiveStallCount++
-            log("No matching job on screen, scrolling down (stall: $consecutiveStallCount)")
+            log("No matching job on screen, scrolling down in search feed (stall: $consecutiveStallCount)")
             service.scrollDown()
 
             if (consecutiveStallCount >= MAX_CONSECUTIVE_STALLS) {
@@ -682,7 +696,7 @@ class BotEngine(private val context: Context) {
             )
         }
 
-        if (backBtn != null) {
+        if (backBtn != null && backBtn.node != null) {
             log("Tapping in-app back button: ${backBtn.label}")
             service.click(backBtn.node)
         } else if (currentJobHash.isNotEmpty()) {
@@ -720,8 +734,8 @@ class BotEngine(private val context: Context) {
     }
 
     private fun isJobDetailsScreen(screenMap: ScreenMap): Boolean {
-        // Feed, Home, and Search Form indicators immediately disqualify a screen from being Job Details
-        if (isFeedScreen(screenMap) || isHomeScreen(screenMap) || isSearchFormScreen(screenMap)) {
+        // Search Results, Home, and Search Form immediately disqualify a screen from being Job Details
+        if (isSearchResultsScreen(screenMap) || isHomeScreen(screenMap) || isSearchFormScreen(screenMap)) {
             return false
         }
 
@@ -737,30 +751,6 @@ class BotEngine(private val context: Context) {
                 lowerText.contains("posted ")
 
         return (currentJobHash.isNotEmpty() || hasJobDetailsKeywords) && hasApply && !isApplicationFormScreen(screenMap)
-    }
-
-    private fun isFeedScreen(screenMap: ScreenMap): Boolean {
-        // 1. Presence of Jobstreet bottom navigation tabs
-        val hasNavTabs = screenMap.elements.any { elem ->
-            elem.isClickable && isFeedNavigationTab(elem.label.trim().lowercase())
-        }
-
-        // 2. Presence of search bar or query inputs
-        val hasSearchBar = screenMap.elements.any { elem ->
-            val l = elem.label.lowercase()
-            (elem.isEditable || elem.isClickable) &&
-                    (l.contains("search jobs") || l.contains("what:") || l.contains("where:") || l == "search")
-        }
-
-        // 3. Presence of "New to you" or "All jobs" tab
-        val hasFeedTabs = findNewToYouTab(screenMap) != null ||
-                screenMap.elements.any { it.label.contains("all jobs", ignoreCase = true) }
-
-        // 4. Presence of multiple job cards on screen
-        val cards = findJobCards(screenMap)
-        if (cards.size >= 2) return true
-
-        return hasNavTabs || hasSearchBar || hasFeedTabs
     }
 
     private fun findApplyButton(screenMap: ScreenMap): UIElement? {
@@ -792,7 +782,6 @@ class BotEngine(private val context: Context) {
     }
 
     private fun extractInputLabel(screenMap: ScreenMap, input: UIElement): String {
-        // Find nearest text element above this input element
         val candidates = screenMap.elements.filter { it != input && it.label.isNotBlank() && it.centerY < input.centerY }
         val nearest = candidates.minByOrNull { input.centerY - it.centerY }
         return nearest?.label ?: input.contentDescription.ifBlank { "Question" }
@@ -905,6 +894,17 @@ class BotEngine(private val context: Context) {
         }
 
         /**
+         * Locates the 'Search' tab in the bottom navigation bar.
+         */
+        internal fun findBottomNavSearchTab(screenMap: ScreenMap): UIElement? {
+            return screenMap.elements.firstOrNull { elem ->
+                val l = elem.label.trim().lowercase()
+                val isSearch = l == "search" || l.startsWith("search\n") || l.endsWith("\nsearch")
+                isSearch && elem.centerY >= 1500
+            }
+        }
+
+        /**
          * Locates the keyword input field on the search form.
          */
         internal fun findKeywordInput(screenMap: ScreenMap): UIElement? {
@@ -929,13 +929,8 @@ class BotEngine(private val context: Context) {
          * Locates the Seek / Search submission button.
          */
         internal fun findSeekButton(screenMap: ScreenMap): UIElement? {
-            // Priority 1: Any element containing "seek" (e.g. "Seek", "SEEK", "Seek jobs", "Seek (123 jobs)")
-            // Note: Does not require isClickable or Button className because in React Native / Compose
-            // the clickable attribute is often on the parent container, and service.click automatically
-            // climbs to clickable parents or gesture taps the center coordinates.
             val seekElem = screenMap.elements.firstOrNull { elem ->
                 val l = elem.label.trim().lowercase()
-                // Guard: Disqualify brand logos / headers (e.g. "Jobstreet by SEEK", "Powered by SEEK")
                 if (l.contains("jobstreet") || l.contains("by seek") || l == "seek asia") return@firstOrNull false
 
                 val isSeekMatch = l == "seek" || l.startsWith("seek ") ||
@@ -944,7 +939,6 @@ class BotEngine(private val context: Context) {
             }
             if (seekElem != null) return seekElem
 
-            // Priority 2: Action phrase buttons ("search jobs", "find jobs")
             val actionPhraseElem = screenMap.elements.firstOrNull { elem ->
                 val l = elem.label.trim().lowercase()
                 (l == "search jobs" || l.startsWith("search jobs ") || l == "find jobs") &&
@@ -952,12 +946,11 @@ class BotEngine(private val context: Context) {
             }
             if (actionPhraseElem != null) return actionPhraseElem
 
-            // Priority 3: Element labeled "search" in the upper/middle viewport (excluding bottom nav tabs)
             return screenMap.elements.firstOrNull { elem ->
                 val l = elem.label.trim().lowercase()
                 val isSearchLabel = l == "search"
                 val inSearchArea = elem.centerY < 1400
-                val notBottomNav = !(isFeedNavigationTab(l) && elem.centerY >= 1800)
+                val notBottomNav = !(isFeedNavigationTab(l) && elem.centerY >= 1500)
                 isSearchLabel && inSearchArea && notBottomNav
             }
         }
@@ -979,6 +972,17 @@ class BotEngine(private val context: Context) {
             return screenMap.elements.firstOrNull { elem ->
                 val lbl = elem.label.trim().lowercase()
                 lbl.contains("new to you") && elem.centerY < 700
+            }
+        }
+
+        /**
+         * Locates a 'Strong match' or 'Strong applicant' quick filter chip if present.
+         */
+        internal fun findStrongMatchFilter(screenMap: ScreenMap): UIElement? {
+            return screenMap.elements.firstOrNull { elem ->
+                val l = elem.label.trim().lowercase()
+                (l.contains("strong match") || l.contains("strong applicant") || l.contains("top match")) &&
+                        elem.centerY < 800 && elem.label.lines().size <= 2
             }
         }
 
@@ -1011,22 +1015,11 @@ class BotEngine(private val context: Context) {
             val label = elem.label.trim()
             val lower = label.lowercase()
 
-            // Ignore empty or too short text (< 5 chars) or excessively long blocks (> 300 chars)
             if (label.length !in 5..300) return false
-
-            // Must contain letters
             if (!label.any { it.isLetter() }) return false
-
-            // Exclude bottom navigation bar tabs
             if (isFeedNavigationTab(lower)) return false
-
-            // Exclude search bar, filter bar, sorting headers
             if (isSearchOrFilter(lower)) return false
-
-            // Exclude action buttons (apply, done, close, etc.)
             if (isPureActionButton(lower)) return false
-
-            // Exclude standalone metadata (salary, time, badges, employment types)
             if (isJobMetadata(lower, label)) return false
 
             return true
@@ -1044,7 +1037,6 @@ class BotEngine(private val context: Context) {
         }
 
         internal fun isJobMetadata(lower: String, rawLabel: String): Boolean {
-            // Multi-line cards containing description/title + salary are legitimate cards
             if (rawLabel.lines().size >= 2 && rawLabel.length >= 35) {
                 return false
             }
@@ -1055,6 +1047,34 @@ class BotEngine(private val context: Context) {
             val isBadgeOrAction = lower in setOf("quick apply", "easily apply", "save", "save job", "share", "dismiss", "report", "promoted", "featured") ||
                     lower.contains("applicant") || lower.contains("early applicant")
             return isSalary || isTime || isWorkType || isBadgeOrAction
+        }
+
+        /**
+         * Detects whether the current screen is genuinely the Search Results feed.
+         */
+        internal fun isSearchResultsScreen(screenMap: ScreenMap): Boolean {
+            val lower = screenMap.rawText.lowercase()
+            // Immediately disqualify if on search form, confirmation, or home prompt
+            if (lower.contains("describe what you're looking for") || lower.contains("clear all")) return false
+            if (lower.contains("continue your job search")) return false
+            if (lower.contains("application submitted") || lower.contains("you've applied")) return false
+            if (screenMap.findButton("submit application") != null) return false
+
+            // Explicit search results markers
+            if (lower.contains("search results") || lower.contains("results for") || lower.contains("jobs found")) return true
+            if (findNewToYouTab(screenMap) != null) return true
+            if (lower.contains("all jobs") && (lower.contains("filter") || lower.contains("sort"))) return true
+
+            // Presence of filter button along with job cards in the results area
+            val hasFilter = screenMap.elements.any { elem ->
+                val l = elem.label.trim().lowercase()
+                (l == "filter" || l == "filters" || l.startsWith("filter (") || l.startsWith("filters (") || l == "sort by") && elem.centerY < 900
+            }
+            val cards = findJobCards(screenMap)
+            if (hasFilter && cards.isNotEmpty()) return true
+
+            // Scrolled feed where cards are present and Home is ruled out
+            return cards.size >= 2 && !isHomeScreen(screenMap)
         }
 
         /**

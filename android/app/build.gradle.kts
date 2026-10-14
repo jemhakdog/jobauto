@@ -21,16 +21,6 @@ android {
             useSupportLibrary = true
         }
 
-        ndk {
-            abiFilters += listOf("arm64-v8a")
-        }
-
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++17", "-O3", "-march=armv8-a+simd+fp16")
-                arguments += listOf("-DANDROID_STL=c++_shared")
-            }
-        }
     }
 
     signingConfigs {
@@ -81,17 +71,6 @@ android {
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.11"
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
-    androidResources {
-        noCompress += listOf("gguf")
     }
 
     packaging {

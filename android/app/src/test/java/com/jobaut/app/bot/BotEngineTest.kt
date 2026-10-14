@@ -359,4 +359,62 @@ class BotEngineTest {
         assertFalse("Home screen with Jobstreet by SEEK brand header must NOT be classified as search form", BotEngine.isSearchFormScreen(screenMap))
         assertTrue("Should be identified as Home Screen", BotEngine.isHomeScreen(screenMap))
     }
+
+    @Test
+    fun testFindBottomNavSearchTab() {
+        val bottomSearch = createElement(
+            text = "Search",
+            className = "android.widget.TextView",
+            isClickable = true,
+            centerY = 1950
+        )
+        val screenMap = ScreenMap(listOf(bottomSearch), "Search")
+        val match = BotEngine.findBottomNavSearchTab(screenMap)
+        assertNotNull("Should find Search tab in bottom nav bar", match)
+        assertEquals("Search", match?.label)
+    }
+
+    @Test
+    fun testFindStrongMatchFilter() {
+        val strongFilter = createElement(
+            text = "Strong match",
+            className = "android.widget.TextView",
+            isClickable = true,
+            centerY = 450
+        )
+        val screenMap = ScreenMap(listOf(strongFilter), "Strong match")
+        val match = BotEngine.findStrongMatchFilter(screenMap)
+        assertNotNull("Should find Strong match filter chip", match)
+        assertEquals("Strong match", match?.label)
+    }
+
+    @Test
+    fun testIsSearchResultsScreenWithNewToYouTab() {
+        val newToYouTab = createElement(
+            text = "New to you",
+            className = "android.widget.TextView",
+            isClickable = true,
+            centerY = 350
+        )
+        val screenMap = ScreenMap(listOf(newToYouTab), "New to you")
+        assertTrue("Screen with New to you tab must be classified as search results", BotEngine.isSearchResultsScreen(screenMap))
+    }
+
+    @Test
+    fun testIsSearchResultsScreenWithFilterAndJobCards() {
+        val filterBtn = createElement(
+            text = "Filter",
+            className = "android.widget.Button",
+            isClickable = true,
+            centerY = 400
+        )
+        val jobCard = createElement(
+            text = "Junior Python Developer\nABC Tech\n₱30,000 / month",
+            className = "android.widget.TextView",
+            isClickable = true,
+            centerY = 700
+        )
+        val screenMap = ScreenMap(listOf(filterBtn, jobCard), "Filter\n${jobCard.text}")
+        assertTrue("Screen with filter button and job card must be classified as search results", BotEngine.isSearchResultsScreen(screenMap))
+    }
 }

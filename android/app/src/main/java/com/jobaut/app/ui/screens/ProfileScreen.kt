@@ -72,6 +72,8 @@ fun ProfileScreen(
     var blacklistedText by remember(uiState.profile) {
         mutableStateOf(uiState.profile.blacklistedKeywords.joinToString(", "))
     }
+    var serverUrl by remember(uiState.profile) { mutableStateOf(uiState.profile.serverUrl) }
+    var rerankerUrl by remember(uiState.profile) { mutableStateOf(uiState.profile.rerankerUrl) }
 
     Column(
         modifier = modifier
@@ -267,6 +269,43 @@ fun ProfileScreen(
             }
         }
 
+        // --- 4. AI Server Endpoints Card ---
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "AI Server Configuration",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                OutlinedTextField(
+                    value = serverUrl,
+                    onValueChange = { serverUrl = it },
+                    label = { Text("LLM Server URL (QA & Operations)") },
+                    supportingText = { Text("e.g. http://127.0.0.1:8080 or http://192.168.1.39:8080") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                OutlinedTextField(
+                    value = rerankerUrl,
+                    onValueChange = { rerankerUrl = it },
+                    label = { Text("Reranker Server URL (Scoring)") },
+                    supportingText = { Text("e.g. http://127.0.0.1:8081 or http://127.0.0.1:8080") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        }
+
         // --- Save Button ---
         Button(
             onClick = {
@@ -289,7 +328,9 @@ fun ProfileScreen(
                     expectedSalary = expectedSalary.trim(),
                     minSalary = minSalary.toIntOrNull() ?: 0,
                     targetTitles = if (targets.isNotEmpty()) targets else uiState.profile.targetTitles,
-                    blacklistedKeywords = if (blacklisted.isNotEmpty()) blacklisted else uiState.profile.blacklistedKeywords
+                    blacklistedKeywords = if (blacklisted.isNotEmpty()) blacklisted else uiState.profile.blacklistedKeywords,
+                    serverUrl = serverUrl.trim().ifEmpty { "http://127.0.0.1:8080" },
+                    rerankerUrl = rerankerUrl.trim().ifEmpty { "http://127.0.0.1:8081" }
                 )
 
                 viewModel.saveProfile(updatedProfile)

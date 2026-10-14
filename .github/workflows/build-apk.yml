@@ -30,14 +30,10 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Setup Android SDK, NDK & CMake
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
-
-      - name: Install NDK and CMake via sdkmanager
-        run: |
-          yes | sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
 
       - name: Ensure Gradlew Executable
         run: chmod +x android/gradlew

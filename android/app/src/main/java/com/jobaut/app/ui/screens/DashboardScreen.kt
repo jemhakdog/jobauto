@@ -17,19 +17,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Warning
@@ -37,20 +36,23 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,18 +71,7 @@ fun DashboardScreen(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-
-    val qwenPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let { viewModel.importModel(it, isQwen = true) }
-    }
-
-    val rerankerPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let { viewModel.importModel(it, isQwen = false) }
-    }
+    var serverUrlInput by remember(uiState.serverUrl) { mutableStateOf(uiState.serverUrl) }
 
     Column(
         modifier = modifier
@@ -100,103 +91,68 @@ fun DashboardScreen(
                     Text(
                         text = "JobAut",
                         style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Autonomous Jobstreet Assistant",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "Autonomous Job Application Engine",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.padding(start = 8.dp)
-                ) {
-                    Text(
-                        text = "v1.0 Native",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        fontWeight = FontWeight.SemiBold
+                // Header status chips
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AssistChip(
+                        onClick = { viewModel.refreshAccessibilityStatus() },
+                        label = {
+                            Text(
+                                text = if (uiState.accessibilityGranted) "ACCESSIBILITY ON" else "NO PERMISSION",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (uiState.accessibilityGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = if (uiState.accessibilityGranted) Color(0xFF00C853) else MaterialTheme.colorScheme.error
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (uiState.accessibilityGranted) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+                        )
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Engine status chips
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                AssistChip(
-                    onClick = { qwenPicker.launch(arrayOf("*/*")) },
-                    label = {
-                        Text(if (uiState.qwenModelPresent) "LLM: Ready (${uiState.qwenModelSize})" else "LLM: Tap to Import")
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = if (uiState.qwenModelPresent) Icons.Default.CheckCircle else Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = if (uiState.qwenModelPresent) Color(0xFF00C853) else Color(0xFF2979FF)
-                        )
-                    },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                )
-
-                AssistChip(
-                    onClick = { rerankerPicker.launch(arrayOf("*/*")) },
-                    label = {
-                        Text(if (uiState.rerankerModelPresent) "Reranker: Ready (${uiState.rerankerModelSize})" else "Reranker: Tap to Import")
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = if (uiState.rerankerModelPresent) Icons.Default.CheckCircle else Icons.Default.FilterAlt,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = if (uiState.rerankerModelPresent) Color(0xFF00C853) else Color(0xFF2979FF)
-                        )
-                    },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                )
-            }
         }
 
-        // --- 2. Accessibility Service Warning Banner (if disabled) ---
+        // --- 2. Permission Warning Banner if Accessibility Not Granted ---
         if (!uiState.accessibilityGranted) {
-            Card(
+            ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
+                colors = CardDefaults.elevatedCardColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer
                 ),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(12.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Warning,
-                            contentDescription = "Warning",
+                            contentDescription = null,
                             tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(24.dp)
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "Accessibility Service Required",
-                                style = MaterialTheme.typography.titleMedium,
+                                text = "Accessibility Service Disabled",
+                                style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -349,7 +305,7 @@ fun DashboardScreen(
                                 uiState.isRunning && uiState.currentJobTitle.isNotBlank() ->
                                     uiState.currentJobTitle
                                 uiState.isRunning ->
-                                    "Scanning feeds & evaluating job requirements..."
+                                    "Automating Jobstreet: executing search & filtering listings..."
                                 else ->
                                     "Engine is idle. Press Start Bot to begin automated job hunting."
                             },
@@ -415,7 +371,7 @@ fun DashboardScreen(
             )
         }
 
-        // --- 5. On-Device AI Models (GGUF) Card ---
+        // --- 5. AI Server Connection & Auto-Loaded Models Card ---
         OutlinedCard(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -441,31 +397,73 @@ fun DashboardScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "On-Device AI Models",
+                            text = "AI Server & Models",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
-                    Text(
-                        text = "Optional",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (uiState.isServerConnected) Color(0xFFE8F5E9) else Color(0xFFFFF3E0)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (uiState.isServerConnected) Icons.Default.CloudDone else Icons.Default.CloudOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = if (uiState.isServerConnected) Color(0xFF00C853) else Color(0xFFE65100)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (uiState.isServerConnected) "ONLINE" else "OFFLINE",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (uiState.isServerConnected) Color(0xFF2E7D32) else Color(0xFFE65100)
+                            )
+                        }
+                    }
+                }
+
+                // Server URL input row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = serverUrlInput,
+                        onValueChange = { serverUrlInput = it },
+                        label = { Text("Server URL") },
+                        placeholder = { Text("http://127.0.0.1:8080") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
                     )
-                }
 
-                if (uiState.isImportingModel) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = uiState.modelImportStatus,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
+                    Button(
+                        onClick = { viewModel.updateServerUrl(serverUrlInput) },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.height(56.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Connect",
+                            modifier = Modifier.size(18.dp)
                         )
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Connect")
                     }
                 }
 
-                // Qwen 2.5 0.5B Model Row
+                if (uiState.isCheckingServer) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+
+                // Model 1: Operations / QA LLM
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -474,54 +472,36 @@ fun DashboardScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(10.dp),
+                            .padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Qwen 2.5 0.5B Instruct",
+                                text = "1. Screening QA Model",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = if (uiState.qwenModelPresent) "Installed (${uiState.qwenModelSize})" else "Not imported (uses rule-based reasoning)",
+                                text = if (uiState.isServerConnected && uiState.loadedLlmModel.isNotBlank())
+                                    uiState.loadedLlmModel
+                                else
+                                    "Qwen 2.5 0.5B (Offline - rule-based fallback)",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (uiState.qwenModelPresent) Color(0xFF00C853) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (uiState.isServerConnected) Color(0xFF00C853) else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Button(
-                                onClick = { qwenPicker.launch(arrayOf("*/*")) },
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FileOpen,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (uiState.qwenModelPresent) "Replace" else "Import")
-                            }
-
-                            if (uiState.qwenModelPresent) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                IconButton(onClick = { viewModel.deleteModel(isQwen = true) }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
+                        Icon(
+                            imageVector = if (uiState.isServerConnected) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = if (uiState.isServerConnected) Color(0xFF00C853) else Color.Gray,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
 
-                // BGE Reranker Model Row
+                // Model 2: Qualification & Reranker Model
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -530,55 +510,37 @@ fun DashboardScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(10.dp),
+                            .padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "BGE Reranker Base",
+                                text = "2. Scoring & Reranker Model",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = if (uiState.rerankerModelPresent) "Installed (${uiState.rerankerModelSize})" else "Not imported (uses keyword matching)",
+                                text = if (uiState.isServerConnected && uiState.loadedRerankerModel.isNotBlank())
+                                    uiState.loadedRerankerModel
+                                else
+                                    "BGE Reranker (Offline - keyword matching fallback)",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (uiState.rerankerModelPresent) Color(0xFF00C853) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (uiState.isServerConnected) Color(0xFF00C853) else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Button(
-                                onClick = { rerankerPicker.launch(arrayOf("*/*")) },
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FileOpen,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (uiState.rerankerModelPresent) "Replace" else "Import")
-                            }
-
-                            if (uiState.rerankerModelPresent) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                IconButton(onClick = { viewModel.deleteModel(isQwen = false) }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
+                        Icon(
+                            imageVector = if (uiState.isServerConnected) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = if (uiState.isServerConnected) Color(0xFF00C853) else Color.Gray,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
 
                 Text(
-                    text = "APK size is kept small (~20MB) by importing models separately. If omitted, JobAut runs fast rule-based automation.",
+                    text = "JobAut connects over HTTP to your server URL. Both models are automatically detected and loaded.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
